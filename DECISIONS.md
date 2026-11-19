@@ -57,3 +57,42 @@ A running log of major implementation decisions. Each milestone appends to it.
 * **The Wumpus is not in the KB.** A moving Wumpus would need time-indexed symbols `W_x_y_t`
   plus a transition model; the knowledge would be almost always "unknown". A probabilistic
   filter expresses this far better (D3).
+
+## D3 — Probabilities and uncertainty (M3)
+
+### Pits: exact Bayesian posterior by frontier enumeration
+* **Model:** each still-unknown cell has a pit independently with prior
+  `δ = (pit_count − proven_pits) / (#unknown cells)`. Evidence = valid breeze observations.
+* **Calculation:** `P(Px | e) = α Σ_{m consistent, m[x]=pit} δ^k (1−δ)^(n−k)` over all
+  assignments `m` of the *frontier* (unknown cells that occur in some breeze constraint).
+  Cells outside the frontier are independent of the evidence, so their posterior equals δ.
+  The KB's proven cells are fixed (0 or 1) before enumeration; constraints already satisfied by
+  a proven pit are dropped.
+* **Efficiency:** the frontier is split into independent connected components, and backtracking
+  drops a partial model when a breezy cell can no longer get a pit. Verified against the AIMA
+  textbook numbers (0.86 / 0.31) and against full-joint brute force on random evidence.
+* **Simplification:** the exact pit *count* is known but we use the independent-δ prior
+  (as AIMA does). Exact counting would couple every cell on the board; the error is small
+  because δ is re-estimated from the remaining count every turn.
+* **Cap:** a component larger than 18 cells uses a per-constraint approximation
+  (`δ / (1 − (1−δ)^|U|)`), clearly labelled `approx` in the inspector. On 8×8 this is rare.
+
+### Wumpus: discrete Bayesian filter (HMM forward algorithm)
+* The Wumpus moves, so its position is a hidden Markov state. Each turn the filter
+  1. removes positions contradicted by the explorer's own action (it survived entering p;
+     arrow missed along a ray),
+  2. predicts with a motion model, or applies "stayed still" if a COLLAPSE/SHUFFLE event shows the
+     Wumpus spent its turn on a power (COLLAPSE also bounds its distance to the target),
+  3. removes the explorer's cell (it was not eaten),
+  4. conditions on stench / no stench,
+  5. renormalises.
+* **Motion-model assumption:** the human is modelled as `15% stay`, otherwise `50%` greedy
+  pursuit (moves that reduce Manhattan distance to the explorer) and `50%` uniform wander.
+  Moves are weighted by `1 − P(pit)` because the Wumpus cannot enter pits. All likelihoods are 0/1
+  because percepts are noise-free in this game.
+* **Robustness:** if the human does something the model gives zero probability (e.g. a long
+  teleport chain), all mass vanishes; the filter then resets to uniform over cells consistent
+  with the current turn and logs that it did so. No silent failure.
+* **How the agent uses it:** `entry_risk(c) = P(W at c) + Σ_n P(W at n)·T(n→c)`. This is the
+  chance of being eaten if the explorer steps into `c` now, before the Wumpus moves or right
+  after. Total cell risk = `1 − (1 − P(pit)) (1 − entry_risk)`.
