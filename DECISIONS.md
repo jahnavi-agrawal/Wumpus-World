@@ -96,3 +96,18 @@ A running log of major implementation decisions. Each milestone appends to it.
 * **How the agent uses it:** `entry_risk(c) = P(W at c) + Σ_n P(W at n)·T(n→c)`. This is the
   chance of being eaten if the explorer steps into `c` now, before the Wumpus moves or right
   after. Total cell risk = `1 − (1 − P(pit)) (1 − entry_risk)`.
+
+## D4 — A* pathfinding (M4)
+
+* **Why A*:** optimal for the risk-weighted cost model, and the heuristic is cheap. Alternatives:
+  BFS ignores risk; Dijkstra is optimal too, but expands more nodes (the test checks this).
+* **State = (cell, jumps_left)**, not just the cell. Jumps are a consumable resource, so a
+  path that spends a jump is a different state from one that does not. Without it A* could
+  plan two jumps when only one is left.
+* **Cost model:** `move = 1 + risk_weight·risk(landing)`, `jump = 2.5 + risk_weight·risk(landing)`.
+  `risk_weight = 25` means a 4% death risk costs as much as one extra step. Jumps cost a bit more
+  than two moves, so they are used only when they avoid risk or a blocked cell.
+* **Admissible heuristic with teleports:** plain Manhattan distance is NOT admissible once pads
+  exist (a pad can cross the board in one step). We use
+  `min(|p−g|, |p−A|+|B−g|, |p−B|+|A−g|)`, tested to be ≤ the true cost and to give the same
+  cost as Dijkstra on random maps.
