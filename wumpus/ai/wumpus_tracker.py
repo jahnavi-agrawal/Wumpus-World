@@ -77,14 +77,15 @@ class WumpusTracker:
         after = sum(self.belief.values())
         self.report.steps.append(FilterStep(label, after / before if before else 0.0))
 
-    def normalize(self, fallback_exclude: set[Pos]) -> None:
+    def normalize(self, fallback_exclude: set[Pos] = frozenset(), fallback_cells=None) -> None:
         total = sum(self.belief.values())
         if total <= 1e-12:
             # Model mismatch (the human did something our motion model gave probability 0).
             # Recover by restarting from a uniform belief over cells consistent with this turn.
             self.report.reset = "evidence contradicted the motion model; belief reset to uniform"
             pads = set(self.info.pads or ())
-            cells = [c for c in all_cells(self.size) if c not in fallback_exclude and c not in pads]
+            cells = list(fallback_cells) if fallback_cells else [
+                c for c in all_cells(self.size) if c not in fallback_exclude and c not in pads]
             self.belief = {c: 1.0 / len(cells) for c in cells}
         else:
             self.belief = {c: p / total for c, p in self.belief.items() if p > 0}

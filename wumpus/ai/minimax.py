@@ -105,7 +105,7 @@ class DuelGame:
     w_death: float = 1000.0
     w_goal: float = 4.0
     w_dist: float = 6.0
-    w_arrow: float = 15.0
+    w_arrow: float = 60.0           # shooting pays only when P(hit) is roughly > w_arrow / w_kill
     w_kill: float = 300.0
 
     def _land(self, c: Pos) -> Pos:

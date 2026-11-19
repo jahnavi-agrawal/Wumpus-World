@@ -137,4 +137,33 @@ A running log of major implementation decisions. Each milestone appends to it.
 * **Depth 4 plies** (explorer, Wumpus, explorer, Wumpus): enough to see "shoot now vs. flee and
   get cornered", and under ~0.3 s in pure Python with move ordering (shots first, then goal distance).
 * **Leaf evaluation:** −1000 if eaten (or adjacent with the Wumpus to move);
-  `−1000·risk − 4·goal_distance + 15·arrows + 6·min(dist_to_Wumpus, 4)`; +300 if the Wumpus is dead.
+  `−1000·risk − 4·goal_distance + 60·arrows + 6·min(dist_to_Wumpus, 4)`; +300 if the Wumpus is dead.
+
+## D6 — Explorer agent, Brain Activity, dynamic replanning (M6)
+
+* **Per-turn pipeline:** percept → own-action evidence → events → KB rebuild + DPLL classification
+  → Bayesian pit posteriors → Wumpus filter → (hunt?) → goal selection → plan validation /
+  A* → Minimax if threatened → action. Each stage writes one or more BrainLog entries. Their
+  `details` come from the stage's result object (`InferenceResult.explain()`,
+  `CellRiskReport.explain()`, `TrackerReport.explain()`, `PathResult.explain()`,
+  `MinimaxResult.explain()`), and DECISION entries carry `refs` to the entries they used.
+* **Combined risk** `risk(c) = 1 − (1 − P(pit))(1 − P(Wumpus))`. P(Wumpus) is the one-step
+  `entry_risk` for cells within 2 of the explorer, and the current belief for farther cells,
+  since the Wumpus will have moved by the time we get there. (Simplification.)
+* **Dynamic replanning:** a plan is kept (commitment avoids dithering between equal goals) until
+  one of these triggers fires, and the reason is logged as [REPLAN]: goal changed, a path cell
+  collapsed, a path cell's risk rose by > 5 points, no jumps left, or Minimax deviated from the plan.
+  The deterministic test feeds a COLLAPSE on the path home; the agent replans and jumps over the hole.
+* **Handling uncertainty when stuck** (found by headless simulation: an idle Wumpus parked in the
+  only pit-safe corridor made the agent oscillate until the turn limit):
+  1. after 12 turns without visiting a new cell, **hunt**: choose the reachable pit-safe cell and
+     direction maximising `P(hit) = Σ belief(ray)`, if P(hit) ≥ 35%;
+  2. otherwise relax the risk cap from 30% to 40%;
+  3. after 36 turns without progress, retreat and climb out (a draw beats a timeout loss).
+* **Tuning found by simulation:** with an arrow worth only 15 points, Minimax fired its only arrow
+  at a 6% hypothesis. The arrow is now worth 60 (`w_kill = 300`), so firing pays only above ~20% hit chance.
+* **Measured play strength** (30 seeds each): idle Wumpus 24 W / 2 D / 4 L; random 18/2/10;
+  omniscient "hunter" (shortest-path pursuit) 12/1/17. The hunter is a perfect chaser that
+  always knows where the explorer is, so it is expected to beat the agent more often than not.
+* **Separation is tested twice:** an AST import check, and a replay test showing that the agent's
+  actions are a pure function of the percept stream.

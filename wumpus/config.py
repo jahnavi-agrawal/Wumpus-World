@@ -32,3 +32,6 @@ class AgentConfig:
     pursuit_prob: float = 0.5          # Wumpus motion model: P(move greedily towards explorer)
     stay_prob: float = 0.15            # Wumpus motion model: P(stay)
     max_component_cells: int = 18      # enumeration cap per frontier component
+    stuck_turns: int = 12              # turns without visiting a new cell = "no progress"
+    relaxed_risk: float = 0.40         # risk cap once stuck (and no good shot)
+    min_shot_prob: float = 0.35        # hunt only if P(arrow hits) is at least this
