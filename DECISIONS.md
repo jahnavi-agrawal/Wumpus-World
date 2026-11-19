@@ -111,3 +111,30 @@ A running log of major implementation decisions. Each milestone appends to it.
   exist (a pad can cross the board in one step). We use
   `min(|p−g|, |p−A|+|B−g|, |p−B|+|A−g|)`, tested to be ≤ the true cost and to give the same
   cost as Dijkstra on random maps.
+
+## D5 — Minimax with alpha-beta (M5)
+
+* **Why Minimax:** the Wumpus is a human adversary, not a random hazard. When it is near, the
+  explorer has to reason "if I do X, what is the Wumpus' best reply?". Alpha-beta prunes the
+  tree without changing the result; tests check equality with plain minimax and that cutoffs happen.
+* **When it runs:** only when `P(Wumpus within distance 2) ≥ 0.30` and the Wumpus is alive.
+  Otherwise the Wumpus is far away, and A* exploration over risk costs is the better tool.
+* **Partial observability → determinization.** Minimax needs a known state, and the explorer
+  does not know where the Wumpus is. We take the top-4 cells of the Bayesian filter,
+  renormalise their probabilities, and run one exact search per hypothesis. Each root action is
+  scored by `E[V(a)] = Σ_h P(h)·V_h(a)`. Every root action is searched with a full window, so
+  `V_h(a)` is exact, not an alpha-beta bound. That makes the average meaningful and lets the
+  inspector show real values.
+* **Assumptions Minimax makes (listed in every [MINIMAX] trace entry):**
+  1. The Wumpus plays optimally against the explorer (worst case), not like the filter's
+     stochastic motion model. This is deliberate: in close combat, assume the worst.
+  2. The Wumpus is at one of the hypotheses. Each hypothesis is treated as if the explorer knew it.
+     This is the known weakness of determinization ("strategy fusion"/clairvoyance).
+  3. Collapse and shuffle powers are ignored inside the search, to keep branching at 5 Wumpus replies.
+  4. Pit uncertainty is not a chance node: cells above the risk cap are pruned from the explorer's
+     moves, and the accumulated `P(pit)` along a line is charged at death cost (−1000·risk).
+     So we get pure minimax rather than expectiminimax.
+* **Depth 4 plies** (explorer, Wumpus, explorer, Wumpus): enough to see "shoot now vs. flee and
+  get cornered", and under ~0.3 s in pure Python with move ordering (shots first, then goal distance).
+* **Leaf evaluation:** −1000 if eaten (or adjacent with the Wumpus to move);
+  `−1000·risk − 4·goal_distance + 15·arrows + 6·min(dist_to_Wumpus, 4)`; +300 if the Wumpus is dead.
