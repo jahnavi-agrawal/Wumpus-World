@@ -37,3 +37,23 @@ A running log of major implementation decisions. Each milestone appends to it.
 * **Safe start zone** (start + its neighbours): the explorer always gets a first move without a
   forced gamble. This is a public rule and appears in the KB as facts.
 * **Cooldown semantics:** after a collapse the Wumpus must wait 3 of its own turns.
+
+## D2 — Propositional knowledge base (M2)
+
+* **Why DPLL + refutation (not forward chaining or resolution):** the breeze rule
+  `B ⇔ P1 ∨ P2 ∨ …` is not Horn, so forward/backward chaining cannot derive "pit at (2,0)".
+  Full resolution is complete but explodes in clause count. DPLL is complete for propositional
+  entailment (`KB ⊨ α` iff `KB ∧ ¬α` is UNSAT) and fast at this size (≤128 symbols).
+* **Encoding:** symbols `Pxy` (pit) and `Bxy` (breeze). We only add breeze biconditionals for
+  cells the explorer actually sensed, in textbook CNF:
+  `(¬Bc ∨ Pn1 ∨ … )` and `(Bc ∨ ¬Pni)` for each neighbour. Facts: start zone, pads,
+  visited and collapsed cells are `¬P`.
+* **The KB is rebuilt from the evidence list every turn** instead of being incrementally
+  modified. That makes *shuffle* trivial and correct: stale breeze observations are simply
+  not included any more (non-monotonic knowledge handled by recomputation, not retraction).
+* **Only the connected component** of the query symbol is passed to DPLL. This is sound
+  because the KB is checked to be satisfiable, and it is also the honest "evidence" shown in
+  the UI: the inspector lists exactly the clauses (with their source) that the solver used.
+* **The Wumpus is not in the KB.** A moving Wumpus would need time-indexed symbols `W_x_y_t`
+  plus a transition model; the knowledge would be almost always "unknown". A probabilistic
+  filter expresses this far better (D3).
