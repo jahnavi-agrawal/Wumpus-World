@@ -383,6 +383,9 @@ class ExplorerAgent:
     def wumpus_risk(self, c: Pos) -> float:
         if not self.tracker.alive:
             return 0.0
+        if not self.cfg.use_bayes:                  # logic only: certain Wumpus = 1, else 0
+            ws = self.wumpus_status.get(c)
+            return 1.0 if ws is not None and ws.status == "wumpus" else 0.0
         if manhattan(c, self.pos) <= 2:
             return self.tracker.entry_risk(c, self._blocked(), self.pit_prob)
         return self.tracker.prob(c)
@@ -390,7 +393,10 @@ class ExplorerAgent:
     def cell_risk(self, c: Pos) -> float:
         if c in self.collapsed or c == self.unstable_here:
             return 1.0
-        p = self.pit_prob.get(c, 0.0 if c in self.visited else 1.0)
+        if self.cfg.use_bayes:
+            p = self.pit_prob.get(c, 0.0 if c in self.visited else 1.0)
+        else:                                       # logic only: anything unproven counts as fatal
+            p = 0.0 if self._pit_known_safe(c) else 1.0
         return 1.0 - (1.0 - p) * (1.0 - self.wumpus_risk(c))
 
     def _pit_known_safe(self, c: Pos) -> bool:
@@ -439,7 +445,7 @@ class ExplorerAgent:
         self._ensure_plan(goal, purpose)
         if self.minimax_cell != self.pos:
             self.minimax_streak, self.minimax_cell = 0, self.pos
-        if self.tracker.alive and self.threat >= self.cfg.threat_threshold:
+        if self.cfg.use_minimax and self.tracker.alive and self.threat >= self.cfg.threat_threshold:
             paralysed = self.minimax_streak >= 4 or self.stuck() >= 2 * self.cfg.stuck_turns
             if not paralysed:
                 self.minimax_streak += 1
@@ -583,7 +589,7 @@ class ExplorerAgent:
         return self.cfg.relaxed_risk if self.stuck() >= self.cfg.stuck_turns else self.cfg.max_explore_risk
 
     def _should_hunt(self) -> bool:
-        return (self.tracker.alive and self.arrows > 0 and not self.has_gold
+        return (self.cfg.use_bayes and self.tracker.alive and self.arrows > 0 and not self.has_gold
                 and self.stuck() >= self.cfg.stuck_turns)
 
     def _best_shot(self):
@@ -639,7 +645,8 @@ class ExplorerAgent:
             return self.info.start, "return to the exit with the gold", []
         rows, ok = [], []
         for c in self._frontier():
-            pit, wr = self.pit_prob.get(c, 0.0), self.wumpus_risk(c)
+            pit = self.pit_prob.get(c, 0.0) if self.cfg.use_bayes else (0.0 if self._pit_known_safe(c) else 1.0)
+            wr = self.wumpus_risk(c)
             total = 1 - (1 - pit) * (1 - wr)
             rows.append((c, pit, wr, total))
             if total <= self.risk_cap():

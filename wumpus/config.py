@@ -49,3 +49,5 @@ class AgentConfig:
     stuck_turns: int = 12              # turns without visiting a new cell = "no progress"
     relaxed_risk: float = 0.40         # risk cap once stuck (and no good shot)
     min_shot_prob: float = 0.35        # hunt only if P(arrow hits) is at least this
+    use_bayes: bool = True             # ablation: False = logic only (unproven cells are unacceptable)
+    use_minimax: bool = True           # ablation: False = never run adversarial search
