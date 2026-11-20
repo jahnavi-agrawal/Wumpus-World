@@ -459,8 +459,10 @@ class ExplorerAgent:
                               "4 turns, so it is not attacking -> the worst-case veto is suspended."])
         if self.plan and self.plan.actions:
             a, nxt = self.plan.pop()
-            return self._commit(a, f"{a} -> {nxt}  ({purpose}; {len(self.plan.actions)} actions left)",
-                                [self.turn_entries[k] for k in ("TARGET", "A*_PLANNER") if k in self.turn_entries])
+            refs = [self.turn_entries[k] for k in ("TARGET", "A*_PLANNER") if k in self.turn_entries]
+            if a in (FORWARD, JUMP) and nxt in self.visited and nxt != goal:
+                return self._commit(a, f"{a} -> {nxt}: {self._backtrack_reason(goal)}", refs)
+            return self._commit(a, f"{a} -> {nxt}  ({purpose}; {len(self.plan.actions)} actions left)", refs)
         if self.pos == self.info.start:
             return self._commit(CLIMB, "no path anywhere and at the exit -> climb out",
                                 [self.turn_entries.get("TARGET", 0)])
@@ -490,6 +492,37 @@ class ExplorerAgent:
                       + (" (cut off from the exit: staying means a certain loss)" if cut_off_from_exit else "")]
                      + res.explain(), cell=res.goal)
         return res.goal
+
+    def _backtrack_reason(self, goal: Pos) -> str:
+        """Plain-language reason for stepping back onto an already visited cell."""
+        warn = []
+        p = self.percepts.get(self.turn)
+        if p is not None:
+            if p.breeze:
+                warn.append("breeze here, so a neighbour may be a pit")
+            if p.stench:
+                warn.append("stench here, so the Wumpus is next to us")
+            if p.portal_signal:
+                warn.append("a portal is next to us")
+            if p.unstable:
+                warn.append("the floor here will collapse")
+        what = "the exit" if goal == self.info.start else f"{goal}"
+        msg = f"backtracking over safe, already visited cells to reach {what}"
+        return msg + (f" ({'; '.join(warn)})" if warn else " (no safe unexplored cell is closer)")
+
+    def predicted_state(self) -> tuple[Pos, Direction]:
+        """Where the explorer expects to be after its last decided action (its own prediction:
+        a bump or a hidden portal can still surprise it; the next percept tells)."""
+        a, pos, f = self.last_action, self.pos, self.facing
+        if a is TURN_LEFT:
+            return pos, f.left()
+        if a is TURN_RIGHT:
+            return pos, f.right()
+        if a in (FORWARD, JUMP):
+            c = pos.step(f, 1 if a is FORWARD else self.info.jump_distance)
+            if 0 <= c.x < self.info.size and 0 <= c.y < self.info.size:
+                return self.portals.get(c, c), f
+        return pos, f
 
     def _commit(self, a: ExplorerAction, why: str, refs: list[int]) -> ExplorerAction:
         self.last_action = a

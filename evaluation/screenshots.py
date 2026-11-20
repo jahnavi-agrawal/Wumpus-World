@@ -40,6 +40,14 @@ def capture() -> list[pathlib.Path]:
         pygame.image.save(app.screen, str(p))
         shots.append(p)
 
+    # 0: the how-to-play pages shown before the game
+    app = App(seed=12, wumpus_mode="human", headless=True, show_help=True)
+    for page in range(3):
+        app.help.page = page
+        app.frame()
+        save(app, f"00_help_{page + 1}.png")
+    pygame.quit()
+
     # 1-3: human Wumpus game, a few turns in
     app = App(seed=12, wumpus_mode="human", headless=True)
     app.frame()

@@ -20,16 +20,18 @@ from . import theme as T
 from .anim import Animator
 from .board_view import draw_mind, draw_reality
 from .brain_panel import BrainPanel, Inspector
+from .help_screen import HelpScreen
 from .session import GameSession
 
 KEY_DIRS = {pygame.K_w: Direction.N, pygame.K_UP: Direction.N, pygame.K_d: Direction.E, pygame.K_RIGHT: Direction.E,
             pygame.K_s: Direction.S, pygame.K_DOWN: Direction.S, pygame.K_a: Direction.W, pygame.K_LEFT: Direction.W}
 SPEEDS = (0.25, 0.5, 1.0, 2.0, 4.0)
-MENU_ITEMS = ("Resume", "Restart (same map)", "New map", "Wumpus: {mode}", "Speed: {speed}x", "Quit")
+MENU_ITEMS = ("Resume", "How to play", "Restart (same map)", "New map", "Wumpus: {mode}", "Speed: {speed}x", "Quit")
 
 
 class App:
-    def __init__(self, seed: int = 7, wumpus_mode: str = "human", headless: bool = False):
+    def __init__(self, seed: int = 7, wumpus_mode: str = "human", headless: bool = False,
+                 show_help: bool | None = None):
         if headless:
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
             os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -52,6 +54,7 @@ class App:
         self.next_auto = 0.0
         self.t0 = time.perf_counter()
         self.frames = 0
+        self.help = HelpScreen() if (not headless if show_help is None else show_help) else None
 
     # ------------------------------------------------------------ helpers
     @property
@@ -98,6 +101,11 @@ class App:
                 self.brain.on_wheel(ev.y, self.session.entries())
 
     def on_key(self, key):
+        if self.help is not None:
+            if self.help.key(key) == "close":
+                self.help = None
+                self.next_auto = time.perf_counter() + self._delay()
+            return
         if self.inspector is not None:
             if key == pygame.K_ESCAPE:
                 self.inspector = None
@@ -114,6 +122,8 @@ class App:
             return
         if key == pygame.K_ESCAPE:
             self.menu_open = True
+        elif key == pygame.K_h:
+            self.help = HelpScreen()
         elif key == pygame.K_SPACE:
             self.step_requests += 1
         elif key == pygame.K_p:
@@ -135,6 +145,11 @@ class App:
             self.submit_wumpus(STAY)
 
     def on_click(self, pos):
+        if self.help is not None:
+            if self.help.click(pos) == "close":
+                self.help = None
+                self.next_auto = time.perf_counter() + self._delay()
+            return
         if self.inspector is not None:
             if self.inspector.click(pos) == "close":
                 self.inspector = None
@@ -163,6 +178,9 @@ class App:
         name = MENU_ITEMS[i]
         if name == "Resume":
             self.menu_open = False
+        elif name == "How to play":
+            self.menu_open = False
+            self.help = HelpScreen()
         elif name.startswith("Restart"):
             self.restart()
             self.menu_open = False
@@ -187,7 +205,7 @@ class App:
             if ev is not None:
                 self._apply(ev, w.explorer, w.wumpus, n0)
             return
-        if self.inspector or self.menu_open or s.phase is Phase.OVER or self.anim.busy:
+        if self.help or self.inspector or self.menu_open or s.phase is Phase.OVER or self.anim.busy:
             return
         now = time.perf_counter()
         want_step = self.step_requests > 0 or (not self.paused and now >= self.next_auto)
@@ -272,17 +290,21 @@ class App:
             pygame.draw.rect(self.screen, T.TILE if hot else T.BG, row, border_radius=8)
             self.screen.blit(T.font(15, bold=hot).render(label, True, T.CYAN if hot else T.TEXT), (row.left + 14, row.top + 9))
             self.menu_rows.append((row, i))
-        hint = T.font(11).render("SPACE step  P pause  R restart  N new map  +/- speed  F log filter", True, T.TEXT_FAINT)
+        hint = T.font(11).render("SPACE step  P pause  R restart  N new map  +/- speed  F log  H help", True, T.TEXT_FAINT)
         self.screen.blit(hint, hint.get_rect(center=(r.centerx, r.bottom - 20)))
 
     def draw(self):
         s = self.session
+        if self.help is not None:
+            self.help.draw(self.screen)
+            pygame.display.flip()
+            return
         self.screen.fill(T.BG)
         self.draw_header()
         hover = T.cell_at(T.REALITY, *pygame.mouse.get_pos())
         draw_reality(self.screen, T.REALITY, s.reality, self.anim, Pos(*hover) if hover else None)
         draw_mind(self.screen, T.MIND, s.mind, self.anim)
-        self.brain.draw(self.screen, s.entries(), s.mind.report, s.last_think_s, s.busy)
+        self.brain.draw(self.screen, s.entries(), s.mind.report, s.last_think_s, s.busy, s.mind.purpose)
         self.draw_banner()
         if self.menu_open:
             self.draw_menu()

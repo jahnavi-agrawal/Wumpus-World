@@ -98,7 +98,7 @@ def test_escape_menu(app):
     key(app, pygame.K_ESCAPE)
     assert app.menu_open
     app.frame()
-    app.menu_action(3)                                         # cycle Wumpus controller
+    app.menu_action(4)                                         # cycle Wumpus controller
     assert app.session.wumpus_mode != "human"
     key(app, pygame.K_ESCAPE)
     assert not app.menu_open
@@ -173,3 +173,39 @@ def test_layout_matches_spec():
     assert (T.BG, T.PANEL, T.TILE, T.BORDER) == ((15, 23, 42), (30, 41, 59), (40, 53, 72), (51, 65, 85))
     assert T.TAG_COLORS["INFERENCE"] == (0x10, 0xB9, 0x81) and T.TAG_COLORS["DECISION"] == (0xF8, 0x71, 0x71)
     assert T.cell_rect(T.REALITY, 3, 2).topleft[1] == T.cell_rect(T.MIND, 3, 2).topleft[1]   # same coords
+
+
+def test_help_screen_shows_first_and_blocks_the_game():
+    a = App(seed=3, wumpus_mode="human", headless=True, show_help=True)
+    for _ in range(40):
+        a.frame()
+    assert a.help is not None and a.session.log_count == 0            # nothing happens behind it
+    key(a, pygame.K_RIGHT)
+    assert a.help.page == 1
+    key(a, pygame.K_RIGHT); key(a, pygame.K_RIGHT)
+    assert a.help.page == 2                                          # last page
+    a.frame()
+    a.on_click(a.help.buttons["start"].center)                        # "Start the game"
+    assert a.help is None
+    assert run_until(a, lambda: a.session.log_count > 0)
+    key(a, pygame.K_h)                                               # reopen during the game
+    assert a.help is not None
+    key(a, pygame.K_RETURN)
+    assert a.help is None
+    pygame.quit()
+
+
+def test_help_text_explains_winning_and_backtracking():
+    from wumpus.ui.help_screen import PAGES
+    text = " ".join(t for _, items in PAGES for _, h, t in items + [("", "", "")]) +         " ".join(h for _, items in PAGES for _, h, _ in items)
+    for must in ("YOU WIN", "IT WINS", "150 turns", "diagonal", "ONE arrow", "walk back",
+                 "Why does it walk back", "breeze"):
+        assert must in text, must
+
+
+def test_mind_shows_predicted_position_and_goal(app):
+    assert run_until(app, lambda: app.session.human_turn)
+    m = app.session.mind
+    real = app.session.reality.world
+    assert (m.explorer, m.facing) == (real.explorer, real.facing) or real.explorer in real.portals.values()
+    assert m.observed is not None

@@ -166,3 +166,12 @@ def test_hunter_can_be_beaten_sometimes():
     wins = sum(play_game(GameConfig(seed=s), ScriptedWumpusController("hunter", s))[0].result.outcome
                is Outcome.EXPLORER_WIN for s in range(30))
     assert wins >= 1
+
+
+def test_backtracking_is_explained_in_plain_language():
+    """Probe a breezy cell, then step back: the decision says why."""
+    from evaluation.scenarios import SCENARIOS, run_scenario
+    r = run_scenario([s for s in SCENARIOS if s.name == "ambiguous_hazards"][0])
+    back = [e.summary for e in r.agent.log.tagged("DECISION") if "backtracking" in e.summary]
+    assert back
+    assert any("breeze here" in b for b in back)

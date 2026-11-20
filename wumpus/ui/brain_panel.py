@@ -60,7 +60,7 @@ class BrainPanel:
                 return eid
         return None
 
-    def draw(self, surf, entries, report, think_s: float, busy: bool):
+    def draw(self, surf, entries, report, think_s: float, busy: bool, goal: str = ""):
         rect = self.rect
         pygame.draw.rect(surf, T.PANEL, rect, border_radius=T.RADIUS)
         pygame.draw.rect(surf, T.BORDER, rect, 1, border_radius=T.RADIUS)
@@ -117,6 +117,10 @@ class BrainPanel:
             meta += f"  |  Minimax E[V] {report.minimax['expected_value']:.0f}"
         surf.blit(T.font(11).render(meta, True, T.TEXT_DIM), (sr.left + 10, sr.top + 54))
         y = sr.top + 72
+        if goal:
+            surf.blit(T.font(12, bold=True).render("GOAL", True, T.CYAN), (sr.left + 10, y))
+            surf.blit(T.font(12).render(T.ascii_safe(goal), True, T.CYAN), (sr.left + 50, y))
+            y += 17
         for line in _wrap(report.explanation, T.font(12), sr.w - 20)[:4]:
             surf.blit(T.font(12).render(line, True, T.TEXT), (sr.left + 10, y))
             y += 15

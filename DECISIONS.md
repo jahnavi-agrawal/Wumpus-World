@@ -392,3 +392,23 @@ agent beats random play about half the time.
 * **Results are reported as measured**, including the unflattering ones: logic-only gets the best
   average score through cautious draws; nothing beats the omniscient Minimax Wumpus more than 6% of
   the time; and the held-out win rate is below the development-seed rate.
+
+## D15 — Usability feedback: instructions and "why does it go back?"
+
+* **User report:** the game was confusing, and the explorer "goes back to the same travelled box
+  many times".
+* **Measured before changing anything** (40 games, idle and random Wumpus): 34% of moves land on an
+  already visited cell. Of 108 immediate back-and-forth moves, 83 came right after a breeze in the
+  probed cell, 7 after breeze + portal signal, and the rest after a stench, portal signal or unstable
+  floor; 9 had no warning (a probed cell with no closer safe frontier). So the behaviour is the
+  intended probe-and-retreat of a cautious agent that can only sense the cell it stands on.
+  The problem was that the interface did not explain it.
+* **Changes:**
+  1. A three-page **How to play** screen before the game (H or the menu reopens it). The game does
+     not start until it is closed.
+  2. Moves onto visited cells are logged in plain language ("backtracking over safe, already visited
+     cells to reach X (breeze here, so a neighbour may be a pit)").
+  3. The current goal is labelled **GOAL** on the Mind board and shown in the decision box.
+  4. The Mind board draws the explorer at its own *predicted* position after its decided action
+     (pure self-knowledge, not hidden data). Before, it was drawn one step behind the Reality board,
+     which looked like it was walking backwards.

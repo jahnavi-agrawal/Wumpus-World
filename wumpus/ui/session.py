@@ -37,18 +37,22 @@ class MindSnapshot:
     hazards: dict                   # Pos -> HazardEstimate
     plan_cells: tuple               # A* route (cells after each remaining action)
     plan_goal: Pos | None
-    explorer: Pos
+    explorer: Pos                   # where the explorer expects to be after its decided action
     facing: Direction
     wumpus_belief: dict             # Pos -> probability
     report: DecisionReport | None
+    observed: Pos | None = None     # where it last perceived itself (before that action)
+    purpose: str = ""               # current goal in words
 
 
 def mind_snapshot(agent: ExplorerAgent) -> MindSnapshot:
     plan = agent.plan
+    pos, facing = agent.predicted_state()
     return MindSnapshot(agent.knowledge(), dict(agent.hazards),
                         tuple(plan.cells) if plan else (), plan.goal if plan else None,
-                        agent.pos, agent.facing, dict(agent.tracker.belief) if agent.tracker.alive else {},
-                        agent.reports[-1] if agent.reports else None)
+                        pos, facing, dict(agent.tracker.belief) if agent.tracker.alive else {},
+                        agent.reports[-1] if agent.reports else None, agent.pos,
+                        plan.purpose if plan else "")
 
 
 class GameSession:

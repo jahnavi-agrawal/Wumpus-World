@@ -179,8 +179,11 @@ def draw_mind(surf, card: pygame.Rect, snap, anim):
         for a, b in zip(pts, pts[1:]):
             if a != b:
                 icons.dashed_line(surf, T.CYAN, a, b, 2, phase=phase)
-        if snap.plan_goal is not None:
-            pygame.draw.rect(surf, T.CYAN, T.cell_rect(card, snap.plan_goal.x, snap.plan_goal.y), 2, border_radius=8)
+    if snap.plan_goal is not None:
+        g = T.cell_rect(card, snap.plan_goal.x, snap.plan_goal.y)
+        pygame.draw.rect(surf, T.CYAN, g, 2, border_radius=8)
+        lab = T.font(10, bold=True).render("GOAL", True, T.CYAN)
+        surf.blit(lab, lab.get_rect(midtop=(g.centerx, g.top + 2)))
     icons.explorer(surf, T.cell_rect(card, snap.explorer.x, snap.explorer.y), snap.facing.name)
     _mind_side(surf, card, snap)
 

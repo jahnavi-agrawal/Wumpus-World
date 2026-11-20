@@ -46,7 +46,7 @@ wumpus/
                            brain_panel, app
   terminal.py, runner.py   terminal version, headless game loop
 evaluation/                scenarios.py (10 fixed dungeons), benchmark.py, screenshots.py, results/
-tests/                     300 pytest tests (unit, integration, separation, UI)
+tests/                     304 pytest tests (unit, integration, separation, UI)
 ```
 
 **Separation of hidden and known state.** The explorer receives a frozen `PublicInfo` once and a
@@ -78,6 +78,16 @@ python -m venv .venv
 Dependencies: `pygame` (interface) and `pytest` (tests). No GPU, no network, no paid APIs.
 
 ## How to play
+
+When the window opens you first see a three-page **How to play** screen (your goal as the Wumpus,
+how to win, what the explorer can sense, how to read the panels, the controls). Press **H** or use the
+menu to open it again at any time.
+
+![How to play](docs/screenshots/00_help_1.png)
+
+**You win** if the explorer falls into a pit, walks into you (or you step onto it), or has not escaped
+after 150 turns. **It wins** by grabbing the gold and climbing out at the entrance (bottom-left).
+If it climbs out without the gold, the game is a draw.
 
 ```
 python main.py                       # window: you are the Wumpus (seed 7)
@@ -128,9 +138,20 @@ predicted Wumpus replies and the pruned branches. Click a dependency to follow t
 
 ![Inspecting a probability calculation](docs/screenshots/03_inspector_evidence.png)
 
+**Why does the explorer walk back over cells it has already visited?** It only learns what is in a
+cell by standing in it. It steps forward to probe a new cell. If it feels a breeze there, any
+unexplored neighbour might be a pit, so it steps back to safe ground. Visited cells are the only cells
+it *knows* are safe, so it walks back through them to reach the next unexplored area or the exit.
+Measured over 40 games, about 1 in 3 moves lands on an already visited cell. Of the immediate
+back-and-forth moves, 77% follow a breeze and most of the rest follow another warning (stench,
+portal signal, unstable floor). Every such move is labelled in the log, e.g.
+`FORWARD -> (2,1): backtracking over safe, already visited cells to reach (1,1) (breeze here, so a
+neighbour may be a pit)`. The current goal is shown as **GOAL** on the Mind board and in the
+decision box.
+
 ## Testing methodology
 
-* **300 pytest tests** (`python -m pytest`): one per rule in RULES.md; DPLL against truth tables;
+* **304 pytest tests** (`python -m pytest`): one per rule in RULES.md; DPLL against truth tables;
   pit probabilities against the AIMA textbook numbers and full-joint brute force; A* against
   Dijkstra (optimal cost, admissible heuristic); alpha-beta against plain minimax; replanning
   triggers; contradiction cores; read-only knowledge snapshot; terminal driven by scripted keystrokes;
@@ -200,8 +221,8 @@ What the numbers say:
   shuffle, gold, hits, new inferences and route changes) rather than elaborate. There is no sound.
 * Human-versus-AI play is supported in both the GUI and the terminal, but no human games were
   recorded or analysed.
-* The Agent's Mind panel lags the Reality panel by one action by design: it shows what the explorer
-  has perceived, and the explorer learns the outcome of its latest move from its next percept.
+* The Agent's Mind panel draws the explorer where it *expects* to be after its latest action (its own
+  prediction). A bump or an undiscovered portal can make that differ from Reality until its next percept.
 
 ## Future improvements
 
