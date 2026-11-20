@@ -158,3 +158,76 @@ def estimate_pits(size: int, statuses: dict, breeze_obs: dict[Pos, tuple[bool, i
     for c in unknown - in_frontier:
         out[c] = CellRiskReport(c, prior, "prior", prior)
     return out
+
+
+# ============================================================================ combined hazards
+def binary_entropy(p: float) -> float:
+    import math
+    if p <= 0.0 or p >= 1.0:
+        return 0.0
+    return -(p * math.log2(p) + (1 - p) * math.log2(1 - p))
+
+
+@dataclass(frozen=True)
+class HazardEstimate:
+    """Per-cell hazard estimate.
+
+    p_pit        P(original pit or collapsed tile) from logic + frontier enumeration
+    p_wumpus     P(the Wumpus stands there NOW), from the HMM filter, clamped by the KB
+    p_wumpus_in  P(it moves in right after we arrive), only for cells we can reach next turn
+    p_death      P(pit) + P(no pit) * (p_wumpus + p_wumpus_in). Pit and Wumpus are mutually
+                 exclusive in a cell (the Wumpus never stands on a pit), so this is NOT an
+                 independence product of the two marginals.
+    confidence   1 for proven facts, else 1 - H(p_death) (binary entropy, bits)
+    """
+    cell: Pos
+    p_pit: float
+    p_wumpus: float
+    p_wumpus_in: float
+    p_death: float
+    confidence: float
+    pit_method: str
+    evidence: tuple[str, ...]
+
+    def to_dict(self) -> dict:
+        return {"cell": tuple(self.cell), "p_pit": self.p_pit, "p_wumpus": self.p_wumpus,
+                "p_wumpus_in": self.p_wumpus_in, "p_death": self.p_death, "confidence": self.confidence,
+                "pit_method": self.pit_method, "evidence": list(self.evidence)}
+
+    def explain(self) -> list[str]:
+        return [f"Cell {self.cell}: P(death) = {self.p_death:.1%}  (confidence {self.confidence:.2f})",
+                f"  P(pit) = {self.p_pit:.1%}  [{self.pit_method}]",
+                f"  P(Wumpus here now) = {self.p_wumpus:.1%}   P(it moves in next) = {self.p_wumpus_in:.1%}",
+                f"  P(death) = P(pit) + (1-P(pit))*(P(W now)+P(W moves in)) "
+                f"= {self.p_pit:.3f} + {1 - self.p_pit:.3f}*{self.p_wumpus + self.p_wumpus_in:.3f}",
+                "  Evidence:"] + [f"    - {e}" for e in self.evidence]
+
+
+def estimate_hazard(cell: Pos, pit: CellRiskReport | None, p_pit: float, p_w_now: float, p_w_in: float,
+                    *, known_pit_free: bool, confirmed_hazard: str | None, wumpus_status: str | None,
+                    wumpus_evidence: list[str]) -> HazardEstimate:
+    ev: list[str] = []
+    if confirmed_hazard:
+        return HazardEstimate(cell, 1.0, 0.0, 0.0, 1.0, 1.0, "confirmed", (f"confirmed hazard: {confirmed_hazard}",))
+    if known_pit_free:
+        p_pit, method = 0.0, "proven pit-free"
+        ev.append("logic: pit-free (visited, rule or entailment)")
+    else:
+        method = pit.method if pit else "prior"
+        if pit and pit.constraints:
+            ev.append(f"pit: {pit.worlds_consistent} consistent models over {len(pit.component)} frontier cells "
+                      f"({', '.join(f'B{b}' for b, _ in pit.constraints)})")
+        else:
+            ev.append(f"pit: no breeze evidence touches it -> prior {p_pit:.1%}")
+    if wumpus_status == "none":
+        p_w_now = 0.0
+        ev.append("logic: Wumpus ruled out here this turn")
+    elif wumpus_status == "wumpus":
+        p_w_now, p_w_in = 1.0, 0.0
+        ev.append("logic: Wumpus certainly here this turn")
+    ev += wumpus_evidence
+    w = min(1.0, p_w_now + p_w_in)
+    death = min(1.0, p_pit + (1 - p_pit) * w)
+    proven = (known_pit_free or p_pit in (0.0, 1.0)) and wumpus_status in ("none", "wumpus") and p_w_in == 0
+    conf = 1.0 if proven or death in (0.0, 1.0) else 1.0 - binary_entropy(death)
+    return HazardEstimate(cell, p_pit, p_w_now, p_w_in, death, conf, method, tuple(ev))

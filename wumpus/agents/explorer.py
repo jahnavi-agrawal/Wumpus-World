@@ -17,8 +17,8 @@ from ..core.geometry import DIRECTIONS, Direction, Pos, all_cells, manhattan, ne
 from ..core.percepts import Percept, PublicInfo
 from .knowledge_base import CellStatus, DungeonKB, WumpusEvidence
 from .minimax import DuelGame, DuelState, determinized_decision
-from .pathfinding import PathResult, astar
-from .bayesian import CellRiskReport, estimate_pits
+from .pathfinding import PathResult, PlanningMode, RiskModel, RoutePlan, plan, plan_routes
+from .bayesian import CellRiskReport, HazardEstimate, estimate_hazard, estimate_pits
 from .trace import BrainLog
 from .wumpus_tracker import WumpusTracker
 
@@ -70,6 +70,8 @@ class ExplorerAgent:
         self.inferred: dict[str, tuple[int, str]] = {}   # proposition -> (turn proven, explanation)
         self.risk_reports: dict[Pos, CellRiskReport] = {}
         self.pit_prob: dict[Pos, float] = {}
+        self.hazards: dict[Pos, HazardEstimate] = {}     # per-cell pit / Wumpus / death estimates
+        self.last_route: RoutePlan | None = None
         self.tracker = WumpusTracker(info, self.cfg.stay_prob, self.cfg.pursuit_prob)
         self.plan: Plan | None = None
         self.retreating = False
@@ -163,6 +165,7 @@ class ExplorerAgent:
 
         self._update_pits()
         self._update_wumpus(p)
+        self._update_hazards()
 
     def valid_breeze(self) -> dict[Pos, tuple[bool, int]]:
         """Breeze observations about ORIGINAL pits: a breeze sensed next to an already-collapsed
@@ -254,9 +257,7 @@ class ExplorerAgent:
             self.pit_prob[c] = 0.0
         for c in self.collapsed:
             self.pit_prob[c] = 1.0
-        for c, r in sorted(self.risk_reports.items()):
-            if r.method in ("enumeration", "approx") and abs(old_prob.get(c, -1) - r.p_pit) >= 0.005:
-                L.add(t, "RISK_CALC", f"Cell {c}: {r.p_pit:.0%} pit", r.explain(), cell=c)
+        self._old_pit_prob = old_prob
 
     def _update_wumpus(self, p: Percept) -> None:
         tr = self.tracker
@@ -276,6 +277,43 @@ class ExplorerAgent:
                          f"most likely {top[0][0]} ({top[0][1]:.0%}), P(within 2)={self.threat:.0%}",
                          tr.report.explain(), cell=top[0][0])
         self.turn_entries["WUMPUS_BELIEF"] = e.id
+
+    def _update_hazards(self) -> None:
+        """Combined pit / Wumpus / death estimate for every non-visited cell (bayesian.estimate_hazard)."""
+        old = self.hazards
+        blocked = self._blocked()
+        tr = self.tracker
+        w_ev = []
+        if tr.alive:
+            w_ev = [f"Wumpus filter: {s.label}" for s in tr.report.steps][-4:]
+        else:
+            w_ev = ["the Wumpus is dead"]
+        new: dict[Pos, HazardEstimate] = {}
+        for c in all_cells(self.info.size):
+            if c in self.visited and c not in self.collapsed and c != self.pos:
+                continue
+            w_now = tr.prob(c) if tr.alive else 0.0
+            w_in = 0.0
+            if tr.alive and manhattan(c, self.pos) <= 2:
+                w_in = max(0.0, tr.entry_risk(c, blocked, self.pit_prob) - w_now)
+            conf = ("collapsed tile" if c in self.collapsed else
+                    "proven pit" if c in self.statuses and self.statuses[c].status == "pit" else None)
+            ws = self.wumpus_status.get(c)
+            new[c] = estimate_hazard(c, self.risk_reports.get(c), self.pit_prob.get(c, 0.0), w_now, w_in,
+                                     known_pit_free=self._pit_known_safe(c), confirmed_hazard=conf,
+                                     wumpus_status=ws.status if ws else None, wumpus_evidence=w_ev)
+        self.hazards = new
+        frontier = set(self._frontier_cells(new))
+        for c in sorted(frontier):
+            h, r = new[c], self.risk_reports.get(c)
+            prev = old.get(c)
+            if prev is not None and abs(prev.p_death - h.p_death) < 0.005:
+                continue
+            if h.p_death == 0.0 and (prev is None or prev.p_death == 0.0):
+                continue
+            details = h.explain() + ([""] + r.explain() if r is not None and r.method in ("enumeration", "approx") else [])
+            self.log.add(self.turn, "RISK_CALC", f"Cell {c}: {h.p_death:.0%} death risk "
+                         f"(pit {h.p_pit:.0%}, Wumpus {h.p_wumpus + h.p_wumpus_in:.0%})", details, cell=c)
 
     # ================================================================ read-only knowledge view
     def knowledge(self) -> "KnowledgeSnapshot":
@@ -526,27 +564,25 @@ class ExplorerAgent:
         return res.goal, f"explore {res.goal}", ok
 
     # ---------------------------------------------------------------- planning
-    def _astar(self, goals: set[Pos], allow_unknown: bool = False) -> PathResult:
-        """allow_unknown: also route through unexplored cells (risk-costed), used when the
-        proven-safe network no longer connects us to the goal (e.g. a tile collapsed behind us)."""
-        cfg = self.cfg
+    def risk_model(self) -> RiskModel:
+        """The planner's view of the world, built only from the explorer's knowledge."""
+        blocked = {c: "collapsed tile" for c in self.collapsed}
+        if self.unstable_here is not None:
+            blocked[self.unstable_here] = "collapses when we leave it"
+        blocked.update({c: "proven pit" for c, s in self.statuses.items() if s.status == "pit"})
+        avoid = {c: "portal with unknown destination" for c in self.portal_status if self._unknown_portal(c)}
+        proven = frozenset(c for c in all_cells(self.info.size) if self._pit_known_safe(c))
+        risk = {c: self.cell_risk(c) for c in all_cells(self.info.size) if c not in blocked}
+        return RiskModel(self.info.size, proven, MappingProxyType(risk), MappingProxyType(blocked),
+                         MappingProxyType(avoid), MappingProxyType(dict(self.portals)))
 
-        def cost(c: Pos):
-            if c in self.collapsed or c == self.unstable_here:
-                return None
-            if c in self.portals:
-                return 0.0                 # known portal: passable, the landing cell is costed
-            if self._unknown_portal(c) and c not in goals:
-                return None
-            if c in goals or self._pit_known_safe(c):
-                r = self.cell_risk(c)
-                return None if r > max(self.risk_cap(), 0.5) else cfg.risk_weight * r
-            if allow_unknown:                  # unexplored cell: only within the normal risk cap
-                r = self.cell_risk(c)
-                return None if r > self.risk_cap() else cfg.risk_weight * r
-            return None
-        return astar(self.pos, self.facing, goals, self.info.size, cost, self.jump_available, self.portals,
-                     cfg.jump_cost, self.info.jump_distance)
+    def _plan(self, goals: set[Pos], mode: PlanningMode = PlanningMode.STRICT) -> PathResult:
+        return plan(self.pos, self.facing, goals, self.risk_model(), mode, self.risk_cap(), self.jump_available,
+                    self.cfg.risk_weight, self.cfg.jump_cost, self.info.jump_distance)
+
+    def _astar(self, goals: set[Pos], allow_unknown: bool = False) -> PathResult:
+        """Strict-safe planning, or risk-tolerant when allow_unknown (cut off from the exit)."""
+        return self._plan(goals, PlanningMode.TOLERANT if allow_unknown else PlanningMode.STRICT)
 
     def _plan_invalid_reason(self, goal: Pos) -> str | None:
         p = self.plan
@@ -573,18 +609,27 @@ class ExplorerAgent:
         reason = self._plan_invalid_reason(goal)
         if reason is None:
             return
-        res = self._astar({goal})
-        if not res.found and goal == self.info.start:      # cut off from the exit
-            res = self._astar({goal}, allow_unknown=True)
-            if res.found:
+        model, mode = self.risk_model(), PlanningMode.STRICT
+        route = plan_routes(self.pos, self.facing, {goal}, model, mode, self.risk_cap(), self.jump_available,
+                            risk_weight=self.cfg.risk_weight, jump_cost=self.cfg.jump_cost,
+                            jump_distance=self.info.jump_distance)
+        if not route.best.found and goal == self.info.start:      # cut off from the exit
+            mode = PlanningMode.TOLERANT
+            route = plan_routes(self.pos, self.facing, {goal}, model, mode, self.risk_cap(), self.jump_available,
+                                risk_weight=self.cfg.risk_weight, jump_cost=self.cfg.jump_cost,
+                                jump_distance=self.info.jump_distance)
+            if route.best.found:
                 reason = f"{reason}; safe cells do not reach {goal} -> route through unexplored cells"
+        self.last_route = route
+        res = route.best
         if res.found:
             self.plan = Plan(goal, purpose, list(res.actions), list(res.cells), list(res.facings), res.cost,
                              [self.cell_risk(c) for c in res.cells])
         else:
             self.plan = None
-        e = self.log.add(self.turn, "A*_PLANNER", (f"path to {goal}: {len(res.actions)} actions, cost {res.cost:.1f}"
-                                              if res.found else f"no path to {goal}"), res.explain(), cell=goal)
+        e = self.log.add(self.turn, "A*_PLANNER", (f"path to {goal}: {len(res.actions)} actions, cost {res.cost:.1f} "
+                                                   f"[{route.mode.value}]"
+                                                   if res.found else f"no path to {goal}"), route.explain(), cell=goal)
         self.turn_entries["A*_PLANNER"] = e.id
         if reason not in ("no plan", "previous plan completed"):
             self.log.add(self.turn, "REPLAN", reason, [f"old plan invalidated: {reason}",

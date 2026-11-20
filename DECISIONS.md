@@ -261,3 +261,31 @@ agent beats random play about half the time.
 * **Explanations:** every inference stores the DPLL proof, the clauses used, and an "X because: …"
   sentence built from the clause sources. `ExplorerAgent.knowledge()` returns a frozen
   `KnowledgeSnapshot` (frozensets and mappingproxy objects) with all the lists the spec names.
+
+## D10 — Hazard estimation and planning per the Bayes/A* specification (Prompt 2)
+
+* **`agents/bayesian.py`** (was `probability.py`) now also returns one `HazardEstimate` per cell:
+  `p_pit`, `p_wumpus` (here now), `p_wumpus_in` (moves in right after we arrive, for reachable
+  cells), `p_death`, `confidence`, evidence. RISK_CALC entries show all of them plus the pit
+  enumeration.
+* **Combining pit and Wumpus:** `P(death) = P(pit) + (1 − P(pit))·(P(W now) + P(W moves in))`.
+  Pit and Wumpus are *mutually exclusive* in a cell (the Wumpus never stands on a pit), and the
+  filter's motion model already weights cells by `1 − P(pit)`. So the second term is a probability
+  conditional on "no pit", not an independent marginal. (Approximation: the filter uses the pit
+  marginals, not the full joint.)
+* **Dependencies between neighbouring pits** come from the joint enumeration of frontier models.
+  The test shows `P(both) ≠ P(a)·P(b)` for two cells sharing a breeze.
+* **Confidence** = 1 for proven facts, otherwise `1 − H(p_death)` (binary entropy in bits).
+  It is high when the estimate is near 0 or 1, and 0 at 50/50. It measures how decisive the evidence is.
+* **Logic overrides the filter where it is certain:** KB "Wumpus ruled out" gives p_wumpus = 0,
+  KB "Wumpus certain" gives 1. Proven pit-free gives p_pit = 0; collapsed or proven pit gives p_death = 1.
+* **Planning modes** (`agents/pathfinding.py`): `STRICT` (every intermediate cell proven pit-free;
+  only the goal may be unproven) and `TOLERANT` (unproven cells allowed when risk ≤ tolerance).
+  The agent plans strict and uses tolerant only when cut off from the exit (D7 fix 1).
+* **Route reports:** `plan_routes` returns the best route plus variants (strict, tolerant,
+  without jump, without portals), the reason each variant was rejected (no path, with counts per
+  rejection cause, or costlier by how much), per-step labels (`proven pit-free` / `UNPROVEN, risk x%` /
+  `known portal`, never "safe" for an unproven cell), and `to_dict()` for the Brain View.
+* The A* core (`astar`) is unchanged; the planning layer only builds the cost function from a
+  `RiskModel` (knowledge only) and runs it in several configurations. Play results are identical
+  to before the refactor (30-seed sweep).

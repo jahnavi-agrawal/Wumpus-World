@@ -32,6 +32,16 @@ class PathResult:
     cost: float = 0.0
     expanded: int = 0
     heuristic_start: float = 0.0
+    mode: str = ""
+    labels: list[str] = field(default_factory=list)             # per cell: proven pit-free / UNPROVEN
+    rejected_cells: dict = field(default_factory=dict)          # reason -> cells the search refused
+
+    def to_dict(self) -> dict:
+        return {"found": self.found, "start": tuple(self.start), "goal": tuple(self.goal) if self.goal else None,
+                "actions": [str(a) for a in self.actions], "cells": [tuple(c) for c in self.cells],
+                "facings": [f.label for f in self.facings], "labels": list(self.labels), "cost": self.cost,
+                "expanded": self.expanded, "mode": self.mode,
+                "rejected_cells": {k: [tuple(c) for c in v] for k, v in self.rejected_cells.items()}}
 
     def explain(self) -> list[str]:
         if not self.found:
@@ -120,3 +130,131 @@ def astar(start: Pos, facing: Direction, goals: set[Pos], size: int, cell_cost: 
                 counter += 1
                 heapq.heappush(heap, (ng + h(ns[0]), h(ns[0]), counter, ns))
     return PathResult(False, start, expanded=expanded, heuristic_start=h(start))
+
+
+# ============================================================================ planning layer
+from enum import Enum
+from types import MappingProxyType
+
+
+class PlanningMode(Enum):
+    STRICT = "strict-safe"          # every intermediate cell proven pit-free; only the goal may be unproven
+    TOLERANT = "risk-tolerant"      # unproven cells allowed when their death risk <= tolerance
+
+
+@dataclass(frozen=True)
+class RiskModel:
+    """Everything the planner needs, built from the explorer's knowledge (never the map)."""
+    size: int
+    proven_safe: frozenset          # proven pit-free cells (visited, rules, entailment)
+    risk: MappingProxyType          # cell -> P(death) estimate
+    blocked: MappingProxyType       # cell -> reason (proven pit, collapsed, about to collapse)
+    avoid: MappingProxyType         # cell -> reason, passable only as the goal (unknown-destination portal)
+    portals: MappingProxyType       # known portal pairs
+    known_limit: float = 0.5        # max risk accepted even on proven pit-free cells (Wumpus)
+
+
+def _label(c: Pos, model: RiskModel) -> str:
+    r = model.risk.get(c, 0.0)
+    if c in model.portals:
+        return "known portal"
+    if c in model.proven_safe:
+        return f"proven pit-free, risk {r:.0%}"
+    return f"UNPROVEN, risk {r:.0%}"            # never label an unknown cell as safe
+
+
+def plan(start: Pos, facing: Direction, goals: set[Pos], model: RiskModel, mode: PlanningMode,
+         tolerance: float, jump: bool, risk_weight: float = 25.0, jump_cost: float = 3.0,
+         jump_distance: int = 3, use_portals: bool = True) -> PathResult:
+    rejected: dict[str, set[Pos]] = {}
+
+    def reject(c: Pos, why: str):
+        rejected.setdefault(why, set()).add(c)
+        return None
+
+    def cost(c: Pos):
+        if c in model.blocked:
+            return reject(c, model.blocked[c])
+        if c in model.portals:
+            return 0.0 if use_portals else reject(c, "portals disabled for this variant")
+        if c in model.avoid and c not in goals:
+            return reject(c, model.avoid[c])
+        r = model.risk.get(c, 0.0)
+        if c in goals or c in model.proven_safe:
+            limit = max(tolerance, model.known_limit)
+            return risk_weight * r if r <= limit else reject(c, f"risk above {limit:.0%}")
+        if mode is PlanningMode.TOLERANT:
+            return risk_weight * r if r <= tolerance else reject(c, f"unproven and risk above tolerance {tolerance:.0%}")
+        return reject(c, "unproven cell (strict mode)")
+
+    res = astar(start, facing, goals, model.size, cost, jump, dict(model.portals) if use_portals else {},
+                jump_cost, jump_distance)
+    res.mode = mode.value
+    res.labels = [_label(c, model) for c in res.cells]
+    res.rejected_cells = {k: sorted(v) for k, v in rejected.items()}
+    return res
+
+
+@dataclass
+class RoutePlan:
+    best: PathResult
+    mode: PlanningMode
+    alternatives: list[tuple[str, PathResult]] = field(default_factory=list)
+    rejected: list[tuple[str, str]] = field(default_factory=list)          # (variant, reason)
+
+    def to_dict(self) -> dict:
+        return {"mode": self.mode.value, "best": self.best.to_dict(),
+                "alternatives": [{"variant": n, **r.to_dict()} for n, r in self.alternatives],
+                "rejected": [{"variant": n, "reason": why} for n, why in self.rejected]}
+
+    def explain(self) -> list[str]:
+        L = [f"Planning mode: {self.mode.value}"] + self.best.explain()
+        if self.best.found:
+            L += [f"     step {i + 1} cell {c}: {lab}" for i, (c, lab) in enumerate(zip(self.best.cells, self.best.labels))]
+        if self.alternatives:
+            L.append("Alternative routes:")
+            L += [f"  {n}: cost {r.cost:.2f}, {len(r.actions)} actions: " + " ".join(map(str, r.actions))
+                  for n, r in self.alternatives]
+        if self.rejected:
+            L.append("Rejected routes:")
+            L += [f"  {n}: {why}" for n, why in self.rejected]
+        if self.best.rejected_cells:
+            L.append("Cells the search could not use:")
+            L += [f"  {why}: {', '.join(map(str, cells[:8]))}{' ...' if len(cells) > 8 else ''}"
+                  for why, cells in self.best.rejected_cells.items()]
+        return L
+
+
+def plan_routes(start: Pos, facing: Direction, goals: set[Pos], model: RiskModel, mode: PlanningMode,
+                tolerance: float, jump: bool, **kw) -> RoutePlan:
+    """Best route in `mode`, plus alternative variants and why the others were rejected."""
+    best = plan(start, facing, goals, model, mode, tolerance, jump, **kw)
+    out = RoutePlan(best, mode)
+    variants = [("strict-safe", dict(mode=PlanningMode.STRICT)),
+                ("risk-tolerant", dict(mode=PlanningMode.TOLERANT)),
+                ("without jump", dict(mode=mode, jump=False)),
+                ("without portals", dict(mode=mode, use_portals=False))]
+    seen = {tuple(best.actions)} if best.found else set()
+    for name, v in variants:
+        if name == mode.value:
+            continue
+        if name == "without jump" and not jump:
+            continue
+        if name == "without portals" and not model.portals:
+            continue
+        args = dict(mode=mode, jump=jump, **kw)
+        args.update(v)
+        r = plan(start, facing, goals, model, args.pop("mode"), tolerance, args.pop("jump"), **args)
+        if not r.found:
+            reasons = "; ".join(f"{len(c)} {why}" for why, c in r.rejected_cells.items()) or "no connection"
+            out.rejected.append((name, f"no path ({reasons})"))
+        elif tuple(r.actions) in seen:
+            continue
+        elif best.found and r.cost > best.cost + 1e-9:
+            seen.add(tuple(r.actions))
+            out.alternatives.append((name, r))
+            out.rejected.append((name, f"costlier: {r.cost:.2f} vs {best.cost:.2f}"))
+        else:
+            seen.add(tuple(r.actions))
+            out.alternatives.append((name, r))
+    return out
