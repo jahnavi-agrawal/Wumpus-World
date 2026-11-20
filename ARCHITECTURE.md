@@ -18,10 +18,12 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 │   │   ├── geometry.py         # Pos, Direction, neighbors, rays, manhattan
 │   │   ├── actions.py          # ExplorerAction, WumpusAction
 │   │   └── percepts.py         # Percept, PublicEvent, PublicInfo
-│   ├── env/                    # HIDDEN GROUND TRUTH — the AI may never import this
-│   │   ├── world.py            # WorldState + seeded generation
-│   │   ├── mechanics.py        # pure transition functions: move/jump/teleport/collapse/shuffle/shoot
-│   │   └── engine.py           # GameEngine: turn sequence, validation, percepts, outcome
+│   ├── environment/            # HIDDEN GROUND TRUTH — the AI may never import this
+│   │   ├── world.py            # WorldState + seeded generation + route check
+│   │   ├── mechanics.py        # transition rules: forward/turn/jump/teleport/collapse/shuffle/shoot
+│   │   ├── percepts.py         # builds the explorer's Percept from the hidden world
+│   │   ├── events.py           # structured GameEvent output for every action
+│   │   └── engine.py           # GameEngine: turn sequence, score, status, outcome
 │   ├── ai/                     # explorer brain — sees only core.* objects
 │   │   ├── trace.py            # BrainLog / TraceEntry (traceable "Brain Activity")
 │   │   ├── logic.py            # propositional CNF, DPLL, KnowledgeBase
@@ -47,9 +49,9 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 | Module | Responsibility | May import |
 |---|---|---|
 | `core.*` | Value types shared by everyone. No randomness, no hidden state. | stdlib |
-| `env.world` | Hidden dungeon: pits, gold, Wumpus, collapsed tiles, pads. Seeded generation with a solvability check. | core |
-| `env.mechanics` | Pure functions implementing RULES.md transitions. | core, env.world |
-| `env.engine` | Owns the `WorldState`, runs the turn sequence, validates actions, builds `Percept`s, decides the outcome. Only thing that touches both sides. | core, env |
+| `environment.world` | Hidden dungeon: pits, gold, Wumpus, collapsed tiles, pads. Seeded generation with a solvability check. | core |
+| `environment.mechanics` | Pure functions implementing RULES.md transitions. | core, environment.world |
+| `environment.engine` | Owns the `WorldState`, runs the turn sequence, validates actions, builds `Percept`s, decides the outcome. Only thing that touches both sides. | core, environment |
 | `ai.logic` | Generic propositional logic: literals as ints, CNF clauses, DPLL SAT, entailment `KB ⊨ α`. Wumpus-specific KB built on top. | stdlib |
 | `ai.probability` | `P(pit | evidence)` per cell by exact enumeration of frontier models, split into independent components. | core, ai.logic results |
 | `ai.wumpus_tracker` | Forward filter over Wumpus location (predict with motion model, update with stench/arrow/survival evidence). | core |
@@ -61,7 +63,7 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 | `ui.*` | Rendering and input. No game logic. | everything |
 
 **Separation guarantee:** `tests/test_separation.py` parses every file in `wumpus/ai/` with `ast`
-and fails if it imports `wumpus.env` (or `wumpus.ui`). The engine only hands the agent
+and fails if it imports `wumpus.environment` (or `wumpus.ui`). The engine only hands the agent
 `PublicInfo` (once) and `Percept` objects (every turn).
 
 ## 3. Class interfaces (abridged)

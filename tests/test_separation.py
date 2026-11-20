@@ -37,7 +37,7 @@ def test_decisions_are_a_function_of_percepts_only():
     cfg = GameConfig(seed=3)
     engine, agent, _ = play_game(cfg, ScriptedWumpusController("random", 3))
     # collect percept/action pairs from the log of a second, instrumented run
-    from wumpus.env.engine import GameEngine, Phase
+    from wumpus.environment.engine import GameEngine, Phase
     e = GameEngine(cfg)
     a = ExplorerAgent(e.public_info())
     ctrl = ScriptedWumpusController("random", 3)

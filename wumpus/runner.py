@@ -5,7 +5,7 @@ import time
 
 from .ai.explorer import ExplorerAgent
 from .config import AgentConfig, GameConfig
-from .env.engine import GameEngine, Phase
+from .environment.engine import GameEngine, Phase
 
 
 def play_game(config: GameConfig, controller, agent_config: AgentConfig | None = None,

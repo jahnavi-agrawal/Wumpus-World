@@ -3,7 +3,7 @@ import pytest
 from wumpus.ai.wumpus_tracker import WumpusTracker
 from wumpus.config import GameConfig
 from wumpus.core.geometry import Pos, manhattan, neighbors
-from wumpus.env.engine import GameEngine
+from wumpus.environment.engine import GameEngine
 
 INFO = GameEngine(GameConfig(seed=1)).public_info()
 
@@ -17,7 +17,7 @@ def tracker():
 def test_initial_uniform_respects_public_rules():
     t = tracker()
     assert sum(t.belief.values()) == pytest.approx(1.0)
-    assert all(manhattan(c, Pos(0, 0)) >= 3 and c not in INFO.pads for c in t.belief)
+    assert all(manhattan(c, Pos(0, 0)) >= 3 for c in t.belief) and len(t.belief) == 64 - 6
 
 
 def test_stench_concentrates_on_neighbours():
@@ -53,21 +53,20 @@ def test_known_pit_excluded_and_pit_risk_downweights():
     assert sum(tr.values()) == pytest.approx(1.0)
 
 
-def test_pad_teleports_mass():
-    a, b = INFO.pads
+def test_learned_portal_teleports_mass():
+    a, b = Pos(4, 4), Pos(1, 6)
     t = tracker()
-    n = neighbors(a, 8)[0]
-    t.belief = {n: 1.0}
+    t.portals = {a: b, b: a}
+    t.belief = {Pos(4, 3): 1.0}
     t.predict(Pos(0, 0), set(), {})
     assert t.belief.get(b, 0) > 0 and a not in t.belief
 
 
-def test_collapse_and_arrow_evidence():
+def test_arrow_evidence():
     t = tracker()
-    t.observe_collapse(Pos(5, 5), 2)
-    t.observe_arrow_missed([Pos(5, x) for x in range(8)])
+    t.observe_arrow_missed([Pos(5, y) for y in range(8)])
     t.normalize(set())
-    assert all(manhattan(c, Pos(5, 5)) <= 2 and c.x != 5 for c in t.belief)
+    assert all(c.x != 5 for c in t.belief) and sum(t.belief.values()) == pytest.approx(1.0)
 
 
 def test_contradiction_resets():

@@ -5,7 +5,7 @@ import pytest
 
 from wumpus.ai.minimax import (DuelGame, DuelState, SearchStats, alphabeta, determinized_decision,
                                minimax)
-from wumpus.core.actions import ExplorerAction, ExplorerActionType
+from wumpus.core.actions import FORWARD, JUMP, SHOOT, TURN_LEFT
 from wumpus.core.geometry import Direction as D, Pos, all_cells, manhattan
 
 
@@ -58,38 +58,46 @@ def test_textbook_tree():
 
 def duel(**kw):
     dist = {c: manhattan(c, Pos(0, 0)) for c in all_cells(8)}
-    return DuelGame(size=8, pads=None, blocked=frozenset(kw.get("blocked", ())), pit_risk=kw.get("risk", {}),
+    return DuelGame(size=8, portals={}, blocked=frozenset(kw.get("blocked", ())), pit_risk=kw.get("risk", {}),
                     goal_dist=dist)
 
 
-def test_shoots_wumpus_in_line():
-    g = duel()
-    root = DuelState(explorer=Pos(3, 3), wumpus=Pos(3, 4), wumpus_alive=True, arrows=1, jumps=0)
-    r = determinized_decision(g, root, [(Pos(3, 4), 1.0)], depth=4)
-    assert r.best_action == ExplorerAction.shoot(D.N)
-    assert r.stats.cutoffs > 0
+def state(e, f, w, arrows=1, jump=False):
+    return DuelState(explorer=Pos(*e), facing=f, wumpus=Pos(*w), wumpus_alive=True, arrows=arrows, jump=jump)
 
 
-def test_flees_without_arrow_never_steps_into_wumpus():
-    g = duel()
-    root = DuelState(explorer=Pos(3, 3), wumpus=Pos(3, 4), wumpus_alive=True, arrows=0, jumps=0)
-    r = determinized_decision(g, root, [(Pos(3, 4), 1.0)], depth=4)
-    assert r.best_action != ExplorerAction.move(D.N)
-    assert r.root_values[ExplorerAction.move(D.N)] == -1000
+def test_shoots_wumpus_in_line_of_fire():
+    r = determinized_decision(duel(), state((3, 3), D.N, (3, 4)), [(Pos(3, 4), 1.0)], depth=4)
+    assert r.best_action is SHOOT and r.stats.cutoffs > 0
 
 
-def test_belief_weighted_shot_direction():
-    g = duel()
-    root = DuelState(explorer=Pos(3, 3), wumpus=Pos(0, 0), wumpus_alive=True, arrows=1, jumps=0)
-    r = determinized_decision(g, root, [(Pos(3, 4), 0.8), (Pos(4, 3), 0.2)], depth=2)
-    assert r.best_action == ExplorerAction.shoot(D.N)
+def test_never_walks_into_the_wumpus():
+    r = determinized_decision(duel(), state((3, 3), D.N, (3, 4), arrows=0), [(Pos(3, 4), 1.0)], depth=4)
+    assert r.best_action is not FORWARD and r.root_values[FORWARD] == -1000
+
+
+def test_belief_weighted_shot_needs_facing():
+    # 80% ahead (north), 20% east: facing north -> shoot
+    r = determinized_decision(duel(), state((3, 3), D.N, (0, 0)), [(Pos(3, 4), 0.8), (Pos(4, 3), 0.2)], depth=2)
+    assert r.best_action is SHOOT
     text = "\n".join(r.explain())
     assert "Hypothesis W at (3,4)" in text and "chosen" in text
 
 
-def test_risky_cells_excluded_and_blocked_respected():
-    g = duel(blocked={Pos(2, 3)}, risk={Pos(3, 2): 0.9})
-    root = DuelState(explorer=Pos(3, 3), wumpus=Pos(7, 7), wumpus_alive=True, arrows=0, jumps=0)
-    acts = g.actions(root)
-    assert ExplorerAction.move(D.W) not in acts and ExplorerAction.move(D.S) not in acts
-    assert all(a.kind is not ExplorerActionType.JUMP for a in acts)
+def test_jump_escape_lands_three_ahead():
+    g = duel()
+    s = g.result(state((1, 3), D.E, (0, 3), arrows=0, jump=True), JUMP)
+    assert s.explorer == Pos(4, 3) and not s.jump
+
+
+def test_risky_cells_and_blocked_excluded():
+    g = duel(blocked={Pos(3, 4)}, risk={Pos(3, 6): 0.9})
+    acts = g.actions(state((3, 3), D.N, (7, 7), arrows=0, jump=True))
+    assert FORWARD not in acts and JUMP not in acts and TURN_LEFT in acts
+
+
+def test_facing_matters_for_leaf_value():
+    g = duel()
+    toward = g.evaluate(state((3, 3), D.S, (7, 7), arrows=0))
+    away = g.evaluate(state((3, 3), D.N, (7, 7), arrows=0))
+    assert toward > away                      # facing the goal direction is worth more

@@ -4,7 +4,7 @@ import random
 from wumpus.ai.logic import DungeonKB, KnowledgeBase, P, dpll
 from wumpus.config import GameConfig
 from wumpus.core.geometry import Pos
-from wumpus.env.engine import GameEngine
+from wumpus.environment.engine import GameEngine
 
 
 def brute_force_sat(clauses, n):

@@ -172,42 +172,68 @@ def B(c: Pos) -> str:
     return f"B{c.x}{c.y}"
 
 
+def O(c: Pos) -> str:
+    return f"O{c.x}{c.y}"
+
+
+def S(c: Pos) -> str:
+    return f"S{c.x}{c.y}"
+
+
 @dataclass(frozen=True)
 class CellStatus:
     cell: Pos
-    status: str                       # "safe" | "pit" | "unknown"
+    status: str                       # pits: "safe" | "pit" | "unknown";  portals: "portal" | "none" | "unknown"
     proof: InferenceResult | None     # the entailment that established it
 
 
 class DungeonKB:
-    """Builds a KnowledgeBase from the explorer's (valid) evidence about pits."""
+    """Builds a KnowledgeBase from the explorer's (valid) evidence.
+
+    Symbols: Pxy (original pit), Bxy (breeze sensed), Oxy (portal), Sxy (portal signal sensed).
+    Rules: Bc <=> OR(P of neighbours), Sc <=> OR(O of neighbours), for every sensed cell c.
+    """
 
     def __init__(self, info: PublicInfo):
         self.info = info
         self.kb = KnowledgeBase()
 
-    def rebuild(self, visited: set[Pos], collapsed: set[Pos], breeze_obs: dict[Pos, tuple[bool, int]]) -> KnowledgeBase:
+    @staticmethod
+    def _biconditional(kb: KnowledgeBase, sensed: str, causes: list[str], value: bool, turn: int,
+                       c: Pos, what: str, rule: str) -> None:
+        kb.tell([kb.lit(sensed, value)], f"percept turn {turn}: {'' if value else 'no '}{what} at {c}")
+        kb.tell([kb.lit(sensed, False)] + [kb.lit(n) for n in causes], f"{rule} rule at {c}")
+        for n in causes:
+            kb.tell([kb.lit(sensed), kb.lit(n, False)], f"{rule} rule at {c}")
+
+    def rebuild(self, visited: set[Pos], collapsed, breeze_obs: dict[Pos, tuple[bool, int]],
+                portal_cells: set[Pos] = frozenset(), signal_obs: dict[Pos, tuple[bool, int]] | None = None
+                ) -> KnowledgeBase:
         kb = KnowledgeBase()
         info = self.info
         for c in sorted(info.safe_start_zone):
             kb.tell([kb.lit(P(c), False)], "public rule: start zone has no pits")
-        for c in sorted(info.pads or ()):
-            kb.tell([kb.lit(P(c), False)], "public rule: teleport pads are never pits")
+            kb.tell([kb.lit(O(c), False)], "public rule: start zone has no portals")
         for c in sorted(visited):
             kb.tell([kb.lit(P(c), False)], f"visited {c} and survived")
+            if c not in portal_cells:
+                kb.tell([kb.lit(O(c), False)], f"stood on {c} without teleporting")
+        for c in sorted(portal_cells):
+            kb.tell([kb.lit(O(c))], f"teleported via {c}")
+            kb.tell([kb.lit(P(c), False)], "public rule: portals are never pits")
         for c in sorted(collapsed):
-            kb.tell([kb.lit(P(c), False)], f"rule: collapse only hits non-pit cells ({c})")
+            kb.tell([kb.lit(P(c), False)], f"{c} was an unstable tile (not an original pit)")
+            kb.tell([kb.lit(O(c), False)], f"{c} was an unstable tile (not a portal)")
         for c, (b, turn) in sorted(breeze_obs.items()):
-            nbrs = neighbors(c, info.size)
-            kb.tell([kb.lit(B(c), b)], f"percept turn {turn}: {'breeze' if b else 'no breeze'} at {c}")
-            # B_c <=> OR(P_n)   in CNF:  (¬B_c ∨ P_n1 ∨ ...)  and  (B_c ∨ ¬P_ni) for each i
-            kb.tell([kb.lit(B(c), False)] + [kb.lit(P(n)) for n in nbrs], f"breeze rule at {c}")
-            for n in nbrs:
-                kb.tell([kb.lit(B(c)), kb.lit(P(n), False)], f"breeze rule at {c}")
+            self._biconditional(kb, B(c), [P(n) for n in neighbors(c, info.size)], b, turn, c, "breeze", "breeze")
+        for c, (sig, turn) in sorted((signal_obs or {}).items()):
+            self._biconditional(kb, S(c), [O(n) for n in neighbors(c, info.size)], sig, turn, c,
+                                "portal signal", "portal-signal")
         self.kb = kb
         return kb
 
     def classify(self, cells: Iterable[Pos]) -> dict[Pos, CellStatus]:
+        """Pit status of each cell, by entailment."""
         out = {}
         for c in cells:
             safe = self.kb.ask(P(c), positive=False)
@@ -216,6 +242,17 @@ class DungeonKB:
                 continue
             pit = self.kb.ask(P(c), positive=True)
             out[c] = CellStatus(c, "pit", pit) if pit.entailed else CellStatus(c, "unknown", safe)
+        return out
+
+    def classify_portals(self, cells: Iterable[Pos]) -> dict[Pos, CellStatus]:
+        out = {}
+        for c in cells:
+            yes = self.kb.ask(O(c), positive=True)
+            if yes.entailed:
+                out[c] = CellStatus(c, "portal", yes)
+                continue
+            no = self.kb.ask(O(c), positive=False)
+            out[c] = CellStatus(c, "none", no) if no.entailed else CellStatus(c, "unknown", yes)
         return out
 
     def all_cells(self) -> list[Pos]:

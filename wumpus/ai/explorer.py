@@ -1,7 +1,7 @@
 """The explorer AI. Receives only PublicInfo + Percepts (never the hidden WorldState).
 
-Per turn:  observe(percept)  -> belief update (KB, Bayes pits, Wumpus filter)
-           decide()          -> goal selection, plan validation / A* replanning, Minimax if threatened
+Per turn:  observe(percept)  -> belief update (KB, Bayes pits, Wumpus filter, portal/tile knowledge)
+           decide()          -> hunt / goal selection, plan validation / A* replanning, Minimax if threatened
 Everything noteworthy is written to `self.log` with the evidence that produced it.
 """
 from __future__ import annotations
@@ -10,15 +10,15 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from ..config import AgentConfig
-from ..core.actions import CLIMB, GRAB, WAIT, ExplorerAction, ExplorerActionType
-from ..core.geometry import DIRECTIONS, Pos, all_cells, manhattan, neighbors, ray
-from ..core.percepts import EventType, Percept, PublicInfo
+from ..core.actions import CLIMB, FORWARD, GRAB, JUMP, SHOOT, TURN_LEFT, TURN_RIGHT, ExplorerAction
+from ..core.geometry import DIRECTIONS, Direction, Pos, all_cells, manhattan, neighbors, ray
+from ..core.percepts import Percept, PublicInfo
 from .logic import CellStatus, DungeonKB
 from .minimax import DuelGame, DuelState, determinized_decision
 from .pathfinding import PathResult, astar
 from .probability import CellRiskReport, estimate_pits
 from .trace import BrainLog
-from .wumpus_tracker import FilterStep, WumpusTracker
+from .wumpus_tracker import WumpusTracker
 
 
 @dataclass
@@ -26,9 +26,17 @@ class Plan:
     goal: Pos
     purpose: str
     actions: list[ExplorerAction]
-    cells: list[Pos]
+    cells: list[Pos]                   # cell after each action
+    facings: list[Direction]           # facing after each action
     cost: float
     step_risk: list[float] = field(default_factory=list)   # risk of each cell when planned
+    expect: tuple[Pos, Direction] | None = None             # where we should be before the next action
+
+    def pop(self) -> tuple[ExplorerAction, Pos]:
+        a, c, f = self.actions.pop(0), self.cells.pop(0), self.facings.pop(0)
+        self.step_risk.pop(0)
+        self.expect = (c, f)
+        return a, c
 
 
 class ExplorerAgent:
@@ -38,16 +46,21 @@ class ExplorerAgent:
         self.log = BrainLog()
         self.turn = 0
         self.pos = info.start
+        self.facing = info.start_facing
         self.has_gold = False
         self.arrows = info.arrows
-        self.jumps = info.jumps
+        self.jump_available = info.jumps > 0
         self.visited: set[Pos] = {info.start}
-        self.collapsed: set[Pos] = set()
+        self.collapsed: dict[Pos, int] = {}        # cell -> turn from which it is a pit
+        self.unstable_here: Pos | None = None      # cell we stand on that will collapse when left
+        self.portals: dict[Pos, Pos] = {}          # learned portal pairs (symmetric)
         self.breeze_obs: dict[Pos, tuple[bool, int]] = {}
+        self.signal_obs: dict[Pos, tuple[bool, int]] = {}
         self.stench = False
         self.glitter = False
         self.dkb = DungeonKB(info)
         self.statuses: dict[Pos, CellStatus] = {}
+        self.portal_status: dict[Pos, CellStatus] = {}
         self.risk_reports: dict[Pos, CellRiskReport] = {}
         self.pit_prob: dict[Pos, float] = {}
         self.tracker = WumpusTracker(info, self.cfg.stay_prob, self.cfg.pursuit_prob)
@@ -55,9 +68,12 @@ class ExplorerAgent:
         self.retreating = False
         self.last_action: ExplorerAction | None = None
         self.last_pos: Pos = info.start
+        self.last_facing: Direction = info.start_facing
         self.threat = 0.0
         self.plan_dropped: str | None = None       # why the plan was discarded outside _ensure_plan
         self.last_progress_turn = 1                # last turn a new cell was visited / gold taken
+        self.minimax_streak = 0                    # consecutive Minimax decisions in the same cell
+        self.minimax_cell: Pos | None = None
         self.turn_entries: dict[str, int] = {}     # tag -> entry id for this turn (for refs)
 
     # ================================================================ public API
@@ -70,107 +86,141 @@ class ExplorerAgent:
         self.turn = p.turn
         self.turn_entries = {}
         L = self.log
-        e = L.add(p.turn, "PERCEPT", f"at {p.position}: {p.flags()}" +
-                  (f" | events: {', '.join(map(str, p.events))}" if p.events else ""),
-                  [f"position {p.position}", f"stench={p.stench} breeze={p.breeze} glitter={p.glitter} "
-                   f"scream={p.scream}", f"has_gold={p.has_gold} arrows={p.arrows} jumps_left={p.jumps_left}",
-                   *(f"public event: {ev}" for ev in p.events)], cell=p.position)
+        e = L.add(p.turn, "PERCEPT", f"at {p.position} facing {p.facing.label}: {p.flags()}",
+                  [f"position {p.position}, facing {p.facing.label}, step {p.step}, score {p.score}",
+                   f"breeze={p.breeze} stench={p.stench} glitter={p.glitter} bump={p.bump} scream={p.scream}",
+                   f"portal_signal={p.portal_signal} unstable={p.unstable} shuffled={p.shuffled} "
+                   f"teleported={p.teleported}",
+                   f"has_gold={p.has_gold} arrows={p.arrows} jump_available={p.jump_available}"], cell=p.position)
         self.turn_entries["PERCEPT"] = e.id
         self.tracker.begin(p.turn)
+        la, moved = self.last_action, p.position != self.pos
 
         # --- evidence from our own previous action (before the Wumpus moved)
-        la = self.last_action
-        if la is not None and la.kind is ExplorerActionType.SHOOT and self.tracker.alive:
+        if la is SHOOT and self.tracker.alive and self.arrows > p.arrows:
             if p.scream:
                 self.tracker.kill()
                 L.add(p.turn, "EVENT", "SCREAM: the arrow killed the Wumpus",
-                      [f"arrow shot {la.direction.name} from {self.last_pos}", "scream percept received"])
+                      [f"arrow shot {self.last_facing.label} from {self.last_pos}", "scream percept received"])
             else:
-                self.tracker.observe_arrow_missed(ray(self.last_pos, la.direction, self.info.size))
-        if self.tracker.alive and la is not None and la.kind in (ExplorerActionType.MOVE, ExplorerActionType.JUMP):
+                self.tracker.observe_arrow_missed(ray(self.last_pos, self.last_facing, self.info.size))
+        if p.bump:
+            L.add(p.turn, "EVENT", f"BUMP: wall ahead of {p.position} ({p.facing.label})",
+                  ["bump percept: the last FORWARD/JUMP hit the outer wall; position unchanged"])
+            if self.plan:
+                self.plan_dropped = "unexpected bump"
+                self.plan = None
+        if p.teleported and la in (FORWARD, JUMP):
+            src = self.last_pos.step(self.last_facing, 1 if la is FORWARD else self.info.jump_distance)
+            self.portals[src], self.portals[p.position] = p.position, src
+            self.tracker.portals = dict(self.portals)
+            L.add(p.turn, "EVENT", f"TELEPORTED: learned portal pair {src} <-> {p.position}",
+                  [f"stepped onto {src} with {la}, percept says we are now at {p.position}",
+                   "rule: a portal moves the entity to its paired portal -> pair learned",
+                   "both cells are portals (O facts in the KB) and are never pits"], cell=p.position)
+        if self.tracker.alive and moved:
             self.tracker.observe_survived_at(p.position)
 
-        self.pos, self.has_gold, self.arrows, self.jumps = p.position, p.has_gold, p.arrows, p.jumps_left
-        self.stench, self.glitter = p.stench, p.glitter
+        # --- collapsing floor: the cell we left is a pit from now on
+        if self.unstable_here is not None and p.position != self.unstable_here:
+            c = self.unstable_here
+            self.collapsed[c] = p.turn
+            L.add(p.turn, "EVENT", f"tile {c} collapsed behind us -> now a pit",
+                  [f"unstable-floor warning was felt on {c}", "rule: unstable tiles collapse when left",
+                   "the cell is impassable from now on; breezes next to it are explained by it"], cell=c)
+            self.unstable_here = None
+            if self.plan:
+                self.plan_dropped = self.plan_dropped or f"cell {c} on the path collapsed"
+        if p.unstable and self.unstable_here != p.position:
+            self.unstable_here = p.position
+            L.add(p.turn, "EVENT", f"UNSTABLE floor at {p.position}: it will collapse when we leave",
+                  ["unstable-floor warning percept", "planning will never route back through this cell"],
+                  cell=p.position)
+
+        if p.shuffled:
+            stale = len(self.breeze_obs)
+            self.breeze_obs = {}
+            L.add(p.turn, "EVENT", f"SHUFFLE: {stale} breeze observations invalidated",
+                  ["shuffle indicator: a pit was swapped with an empty unvisited cell",
+                   "visited cells stay pit-free; every older breeze observation is dropped"])
+
+        self.pos, self.facing, self.has_gold, self.arrows = p.position, p.facing, p.has_gold, p.arrows
+        self.jump_available, self.stench, self.glitter = p.jump_available, p.stench, p.glitter
         if p.position not in self.visited or (p.has_gold and la is GRAB):
             self.last_progress_turn = p.turn
         self.visited.add(p.position)
-
-        # --- public events
-        stayed = False
-        for ev in p.events:
-            if ev.kind is EventType.COLLAPSE:
-                self.collapsed.add(ev.pos)
-                stayed = True
-                L.add(p.turn, "EVENT", f"tile {ev.pos} collapsed - now impassable",
-                      ["rule: collapsed tiles are deadly and impassable",
-                       "rule: only non-pit cells collapse -> add ¬P to KB",
-                       f"rule: Wumpus stood still within {self.info.collapse_range} of {ev.pos}"], cell=ev.pos)
-            elif ev.kind is EventType.SHUFFLE:
-                stale = len(self.breeze_obs)
-                self.breeze_obs = {}
-                stayed = True
-                L.add(p.turn, "EVENT", f"SHUFFLE: {stale} breeze observations invalidated",
-                      ["rule: pits were re-placed on cells never visited by the explorer",
-                       "visited cells stay pit-free; all older breeze evidence is dropped",
-                       "the Wumpus spent its turn and did not move"])
         self.breeze_obs[p.position] = (p.breeze, p.turn)
+        self.signal_obs[p.position] = (p.portal_signal, p.turn)
 
         self._update_pits()
-        self._update_wumpus(p, stayed)
+        self._update_wumpus(p)
+
+    def valid_breeze(self) -> dict[Pos, tuple[bool, int]]:
+        """Breeze observations about ORIGINAL pits: a breeze sensed next to an already-collapsed
+        tile is explained by that tile and carries no information, so it is left out."""
+        out = {}
+        for c, (b, t) in self.breeze_obs.items():
+            if b and any(n in self.collapsed and self.collapsed[n] <= t for n in neighbors(c, self.info.size)):
+                continue
+            out[c] = (b, t)
+        return out
 
     def _update_pits(self) -> None:
         L, t = self.log, self.turn
         old_texts = {self.dkb.kb.clause_text(c) for c in self.dkb.kb.clauses}
-        kb = self.dkb.rebuild(self.visited, self.collapsed, self.breeze_obs)
+        breeze = self.valid_breeze()
+        portal_cells = set(self.portals)
+        kb = self.dkb.rebuild(self.visited, self.collapsed, breeze, portal_cells, self.signal_obs)
         if not kb.satisfiable():
-            L.add(t, "WARNING", "KB inconsistent - keeping only the current observation",
+            L.add(t, "WARNING", "KB inconsistent - keeping only the current observations",
                   ["This should be impossible under the public rules."])
             self.breeze_obs = {self.pos: self.breeze_obs[self.pos]}
-            kb = self.dkb.rebuild(self.visited, self.collapsed, self.breeze_obs)
+            breeze = self.valid_breeze()
+            kb = self.dkb.rebuild(self.visited, self.collapsed, breeze, portal_cells, self.signal_obs)
         new = [(kb.clause_text(c), s) for c, s in zip(kb.clauses, kb.sources) if kb.clause_text(c) not in old_texts]
         e = L.add(t, "KB_TELL", f"{len(kb.clauses)} clauses ({len(new)} new)",
                   [f"  {c}    <- {s}" for c, s in new] or ["no new clauses"])
         self.turn_entries["KB_TELL"] = e.id
 
         cells = [c for c in all_cells(self.info.size) if c not in self.visited and c not in self.collapsed]
-        prev = self.statuses
+        prev, prev_portal = self.statuses, self.portal_status
         self.statuses = self.dkb.classify(cells)
+        self.portal_status = self.dkb.classify_portals(self._frontier_cells(cells))
         for c, st in sorted(self.statuses.items()):
             if st.status != "unknown" and (c not in prev or prev[c].status != st.status):
                 L.add(t, "KB_INFER", f"Cell {c} proven {'SAFE (no pit)' if st.status == 'safe' else 'PIT'}",
+                      st.proof.explain(), refs=[self.turn_entries["KB_TELL"]], cell=c)
+        for c, st in sorted(self.portal_status.items()):
+            if st.status == "portal" and c not in self.portals and (
+                    c not in prev_portal or prev_portal[c].status != "portal"):
+                L.add(t, "KB_INFER", f"Cell {c} proven PORTAL (destination unknown -> avoid)",
                       st.proof.explain(), refs=[self.turn_entries["KB_TELL"]], cell=c)
         n_pit = sum(s.status == "pit" for s in self.statuses.values())
         n_unknown = sum(s.status == "unknown" for s in self.statuses.values())
         prior = max(0.0, min(1.0, (self.info.pit_count - n_pit) / n_unknown)) if n_unknown else 0.0
         old_prob = self.pit_prob
-        self.risk_reports = estimate_pits(self.info.size, self.statuses, self.breeze_obs, prior,
+        self.risk_reports = estimate_pits(self.info.size, self.statuses, breeze, prior,
                                           self.cfg.max_component_cells)
         self.pit_prob = {c: r.p_pit for c, r in self.risk_reports.items()}
         for c in self.visited:
             self.pit_prob[c] = 0.0
+        for c in self.collapsed:
+            self.pit_prob[c] = 1.0
         for c, r in sorted(self.risk_reports.items()):
             if r.method in ("enumeration", "approx") and abs(old_prob.get(c, -1) - r.p_pit) >= 0.005:
                 L.add(t, "RISK_CALC", f"Cell {c}: {r.p_pit:.0%} pit", r.explain(), cell=c)
 
-    def _update_wumpus(self, p: Percept, stayed: bool) -> None:
+    def _update_wumpus(self, p: Percept) -> None:
         tr = self.tracker
         if not tr.alive:
             return
         if p.turn > 1:
-            collapse = [ev for ev in p.events if ev.kind is EventType.COLLAPSE]
-            if collapse:
-                tr.observe_collapse(collapse[0].pos, self.info.collapse_range)
-            elif stayed:
-                tr.report.steps.append(FilterStep("SHUFFLE event: Wumpus spent its turn (no motion)", 1.0))
-            else:
-                tr.predict(p.position, self._blocked(), self.pit_prob)
+            tr.predict(p.position, self._blocked(), self.pit_prob)
             tr.observe_survived_at(p.position)
         tr.observe_stench(p.position, p.stench)
         nb = set(neighbors(p.position, self.info.size))
         fallback = [c for c in all_cells(self.info.size)
-                    if c != p.position and (c in nb) == p.stench and c not in self._blocked()
-                    and not (self.info.pads and c in self.info.pads)]
+                    if c != p.position and (c in nb) == p.stench and c not in self._blocked()]
         tr.normalize(fallback_cells=fallback)
         self.threat = tr.prob_within(self.pos, 2)
         top = tr.top(1)
@@ -181,7 +231,11 @@ class ExplorerAgent:
 
     # ================================================================ risk model
     def _blocked(self) -> set[Pos]:
-        return self.collapsed | {c for c, s in self.statuses.items() if s.status == "pit"}
+        return set(self.collapsed) | {c for c, s in self.statuses.items() if s.status == "pit"}
+
+    def _unknown_portal(self, c: Pos) -> bool:
+        st = self.portal_status.get(c)
+        return c not in self.portals and st is not None and st.status == "portal"
 
     def wumpus_risk(self, c: Pos) -> float:
         if not self.tracker.alive:
@@ -191,18 +245,18 @@ class ExplorerAgent:
         return self.tracker.prob(c)
 
     def cell_risk(self, c: Pos) -> float:
-        if c in self.collapsed:
+        if c in self.collapsed or c == self.unstable_here:
             return 1.0
         p = self.pit_prob.get(c, 0.0 if c in self.visited else 1.0)
         return 1.0 - (1.0 - p) * (1.0 - self.wumpus_risk(c))
 
     def _pit_known_safe(self, c: Pos) -> bool:
-        return c in self.visited or (c in self.statuses and self.statuses[c].status == "safe")
+        return c not in self.collapsed and (
+            c in self.visited or c in self.portals or (c in self.statuses and self.statuses[c].status == "safe"))
 
     # ================================================================ decision
     def decide(self) -> ExplorerAction:
-        t, L = self.turn, self.log
-        self.last_pos = self.pos
+        self.last_pos, self.last_facing = self.pos, self.facing
         if self.glitter and not self.has_gold:
             return self._commit(GRAB, "glitter perceived -> grab the gold", [self.turn_entries["PERCEPT"]])
         if self.has_gold and self.pos == self.info.start:
@@ -213,11 +267,14 @@ class ExplorerAgent:
             if shot is not None:
                 cell, d, p_hit = shot
                 if cell == self.pos:
-                    return self._commit(ExplorerAction.shoot(d), f"hunt: SHOOT {d.name}, P(hit)={p_hit:.0%}",
-                                        [self.turn_entries["TARGET"], self.turn_entries["WUMPUS_BELIEF"]])
-                return self._execute(cell, f"hunt: reach {cell} to shoot {d.name}")
+                    refs = [self.turn_entries["TARGET"], self.turn_entries["WUMPUS_BELIEF"]]
+                    if self.facing == d:
+                        return self._commit(SHOOT, f"hunt: SHOOT {d.label}, P(hit)={p_hit:.0%}", refs)
+                    turn = TURN_LEFT if self.facing.left() == d else TURN_RIGHT
+                    return self._commit(turn, f"hunt: {turn} to face {d.label} before shooting", refs)
+                return self._execute(cell, f"hunt: reach {cell} to shoot {d.label}")
 
-        goal, purpose, candidates = self._select_goal()
+        goal, purpose, _ = self._select_goal()
         if goal is None:
             if self.pos == self.info.start:
                 return self._commit(CLIMB, "no acceptable frontier cell and at the exit -> retreat (climb)",
@@ -227,16 +284,48 @@ class ExplorerAgent:
 
     def _execute(self, goal: Pos, purpose: str) -> ExplorerAction:
         self._ensure_plan(goal, purpose)
-
+        if self.minimax_cell != self.pos:
+            self.minimax_streak, self.minimax_cell = 0, self.pos
         if self.tracker.alive and self.threat >= self.cfg.threat_threshold:
-            return self._minimax_action(goal)
+            paralysed = self.minimax_streak >= 4 or self.stuck() >= 2 * self.cfg.stuck_turns
+            if not paralysed:
+                self.minimax_streak += 1
+                return self._minimax_action(goal)
+            if self.minimax_streak == 4:           # log once; suppression lasts until we leave this cell
+                self.minimax_streak = 5
+                self.log.add(self.turn, "WARNING", f"anti-paralysis: Minimax kept us in {self.pos} for 4 turns "
+                             "-> follow the plan until we leave this cell",
+                             [f"threat {self.threat:.0%} would normally trigger Minimax",
+                              "Minimax assumes a Wumpus that always attacks; we survived next to it for",
+                              "4 turns, so it is not attacking -> the worst-case veto is suspended."])
         if self.plan and self.plan.actions:
-            a = self.plan.actions.pop(0)
-            nxt = self.plan.cells.pop(0)
-            self.plan.step_risk.pop(0)
-            return self._commit(a, f"{a} -> {nxt}  ({purpose}; {len(self.plan.actions)} steps left)",
+            a, nxt = self.plan.pop()
+            return self._commit(a, f"{a} -> {nxt}  ({purpose}; {len(self.plan.actions)} actions left)",
                                 [self.turn_entries[k] for k in ("TARGET", "ASTAR") if k in self.turn_entries])
-        return self._commit(WAIT, "no path available -> wait", [self.turn_entries.get("TARGET", 0)])
+        if self.pos == self.info.start:
+            return self._commit(CLIMB, "no path anywhere and at the exit -> climb out",
+                                [self.turn_entries.get("TARGET", 0)])
+        fallback = self._least_risky_frontier(cut_off_from_exit=(goal == self.info.start))
+        if fallback is not None and fallback != goal:
+            return self._execute(fallback, f"cut off from {goal}: explore {fallback} to find a new route")
+        return self._commit(TURN_LEFT, "no path to any cell -> turn in place (waiting)",
+                            [self.turn_entries.get("TARGET", 0)])
+
+    def _least_risky_frontier(self, cut_off_from_exit: bool) -> Pos | None:
+        """Last resort when the goal is unreachable: the cheapest reachable frontier cell.
+        Above the normal risk cap only when cut off from the exit (otherwise a certain loss)."""
+        cap = 0.5 if cut_off_from_exit else self.risk_cap()
+        cells = [c for c in self._frontier() if self.cell_risk(c) <= cap]
+        res = self._astar(set(cells), allow_unknown=True) if cells else None
+        if res is None or not res.found:
+            return None
+        self.log.add(self.turn, "TARGET", f"goal unreachable -> explore {res.goal} to open a new route "
+                     f"(risk {self.cell_risk(res.goal):.0%})",
+                     ["The planned goal cannot be reached even through unexplored cells.",
+                      f"Fallback: A* to the cheapest frontier cell with risk ≤ {cap:.0%}"
+                      + (" (cut off from the exit: staying means a certain loss)" if cut_off_from_exit else "")]
+                     + res.explain(), cell=res.goal)
+        return res.goal
 
     def _commit(self, a: ExplorerAction, why: str, refs: list[int]) -> ExplorerAction:
         self.last_action = a
@@ -262,7 +351,7 @@ class ExplorerAgent:
         while q:
             c = q.popleft()
             for n in neighbors(c, self.info.size):
-                if n not in dist and n not in self.collapsed and self._pit_known_safe(n):
+                if n not in dist and self._pit_known_safe(n) and n not in self.portals:
                     dist[n] = dist[c] + 1
                     q.append(n)
         rows = []
@@ -279,21 +368,24 @@ class ExplorerAgent:
         details = [f"No progress for {self.stuck()} turns and an arrow is left -> hunt the Wumpus.",
                    "For every reachable pit-safe cell s and direction d:  P(hit) = Σ belief(ray(s,d))",
                    f"score = P(hit) - 0.01·steps;  shoot only if P(hit) ≥ {self.cfg.min_shot_prob:.0%}",
-                   f"{'cell':<7}{'dir':<4}{'steps':>6}{'P(hit)':>9}{'score':>8}"]
-        details += [f"{str(r[2]):<7}{r[3].name:<4}{r[4]:>6}{r[1]:>9.1%}{r[0]:>8.3f}" for r in rows[:8]]
-        e = self.log.add(self.turn, "TARGET", f"hunt: shoot {d.name} from {c} (P(hit)={p:.0%})", details,
+                   f"{'cell':<7}{'dir':<6}{'steps':>6}{'P(hit)':>9}{'score':>8}"]
+        details += [f"{str(r[2]):<7}{r[3].label:<6}{r[4]:>6}{r[1]:>9.1%}{r[0]:>8.3f}" for r in rows[:8]]
+        e = self.log.add(self.turn, "TARGET", f"hunt: shoot {d.label} from {c} (P(hit)={p:.0%})", details,
                          refs=[self.turn_entries["WUMPUS_BELIEF"]], cell=c)
         self.turn_entries["TARGET"] = e.id
         return c, d, p
 
     # ---------------------------------------------------------------- goal selection
-    def _frontier(self) -> list[Pos]:
-        out = set()
-        for v in self.visited:
-            for n in neighbors(v, self.info.size):
-                if n not in self.visited and n not in self.collapsed and self.pit_prob.get(n, 1.0) < 1.0:
-                    out.add(n)
+    def _frontier_cells(self, candidates) -> list[Pos]:
+        cand = set(candidates)
+        out = {n for v in self.visited for n in neighbors(v, self.info.size)
+               if n in cand and n not in self.visited and n not in self.collapsed}
         return sorted(out)
+
+    def _frontier(self) -> list[Pos]:
+        stuck = self.stuck() >= self.cfg.stuck_turns
+        return [c for c in self._frontier_cells(all_cells(self.info.size))
+                if self.pit_prob.get(c, 1.0) < 1.0 and (stuck or not self._unknown_portal(c))]
 
     def _select_goal(self):
         cfg, L = self.cfg, self.log
@@ -311,11 +403,11 @@ class ExplorerAgent:
             rows.append((c, pit, wr, total))
             if total <= self.risk_cap():
                 ok.append(c)
-        details = ["Frontier = unvisited cells adjacent to visited cells.",
+        details = ["Frontier = unvisited cells adjacent to visited cells (proven portals with an",
+                   "unknown destination are skipped unless stuck).",
                    f"Acceptable if combined risk ≤ {self.risk_cap():.0%};  risk = 1-(1-P(pit))(1-P(Wumpus))",
                    f"{'cell':<7}{'P(pit)':>8}{'P(W)':>8}{'risk':>8}"]
         details += [f"{str(c):<7}{p:>8.1%}{w:>8.1%}{r:>8.1%}{'  ok' if c in ok else ''}" for c, p, w, r in rows]
-        # plan commitment: keep the current goal while it is still acceptable
         if self.plan and self.plan.goal in ok and not self.retreating:
             e = L.add(self.turn, "TARGET", f"keep target {self.plan.goal} ({len(ok)} acceptable)", details,
                       cell=self.plan.goal)
@@ -334,7 +426,11 @@ class ExplorerAgent:
             self.turn_entries["TARGET"] = e.id
             return None, "", rows
         self.retreating = False
-        res = self._astar(set(ok))
+        safe = [c for c, _, _, r in rows if c in ok and r <= cfg.safe_risk]
+        goals = safe or ok
+        details.append(f"{len(safe)} cells are near-safe (risk ≤ {cfg.safe_risk:.0%}) -> "
+                       + ("explore only those" if safe else "no safe option, accept calculated risk"))
+        res = self._astar(set(goals))
         if not res.found:
             e = L.add(self.turn, "TARGET", "acceptable cells unreachable -> retreat", details + res.explain())
             self.turn_entries["TARGET"] = e.id
@@ -342,22 +438,32 @@ class ExplorerAgent:
             return None, "", rows
         details.append(f"A* over all acceptable cells picks the cheapest: {res.goal} (cost {res.cost:.2f})")
         e = L.add(self.turn, "TARGET", f"explore {res.goal} (risk {self.cell_risk(res.goal):.0%}, "
-                  f"{len(ok)} acceptable)", details, cell=res.goal)
+                  f"{len(goals)} candidates)", details, cell=res.goal)
         self.turn_entries["TARGET"] = e.id
         return res.goal, f"explore {res.goal}", ok
 
     # ---------------------------------------------------------------- planning
-    def _astar(self, goals: set[Pos]) -> PathResult:
+    def _astar(self, goals: set[Pos], allow_unknown: bool = False) -> PathResult:
+        """allow_unknown: also route through unexplored cells (risk-costed), used when the
+        proven-safe network no longer connects us to the goal (e.g. a tile collapsed behind us)."""
         cfg = self.cfg
 
         def cost(c: Pos):
-            if c in self.collapsed:
+            if c in self.collapsed or c == self.unstable_here:
+                return None
+            if c in self.portals:
+                return 0.0                 # known portal: passable, the landing cell is costed
+            if self._unknown_portal(c) and c not in goals:
                 return None
             if c in goals or self._pit_known_safe(c):
                 r = self.cell_risk(c)
                 return None if r > max(self.risk_cap(), 0.5) else cfg.risk_weight * r
+            if allow_unknown:                  # unexplored cell: only within the normal risk cap
+                r = self.cell_risk(c)
+                return None if r > self.risk_cap() else cfg.risk_weight * r
             return None
-        return astar(self.pos, goals, self.info.size, cost, self.jumps, self.info.pads, cfg.jump_cost)
+        return astar(self.pos, self.facing, goals, self.info.size, cost, self.jump_available, self.portals,
+                     cfg.jump_cost, self.info.jump_distance)
 
     def _plan_invalid_reason(self, goal: Pos) -> str | None:
         p = self.plan
@@ -368,15 +474,16 @@ class ExplorerAgent:
             return "previous plan completed"
         if p.goal != goal:
             return f"goal changed {p.goal} -> {goal}"
+        if p.expect is not None and p.expect != (self.pos, self.facing):
+            return f"unexpected state: expected {p.expect[0]} {p.expect[1].label}, at {self.pos} {self.facing.label}"
         for c, r0 in zip(p.cells, p.step_risk):
             if c in self.collapsed:
                 return f"cell {c} on the path collapsed"
             r = self.cell_risk(c)
             if r > r0 + 0.05:
                 return f"risk of {c} rose {r0:.0%} -> {r:.0%}"
-        a = p.actions[0]
-        if a.kind is ExplorerActionType.JUMP and self.jumps == 0:
-            return "no jumps left"
+        if p.actions[0] is JUMP and not self.jump_available:
+            return "jump already used"
         return None
 
     def _ensure_plan(self, goal: Pos, purpose: str) -> None:
@@ -384,24 +491,27 @@ class ExplorerAgent:
         if reason is None:
             return
         res = self._astar({goal})
-        tag_reason = reason
+        if not res.found and goal == self.info.start:      # cut off from the exit
+            res = self._astar({goal}, allow_unknown=True)
+            if res.found:
+                reason = f"{reason}; safe cells do not reach {goal} -> route through unexplored cells"
         if res.found:
-            self.plan = Plan(goal, purpose, list(res.actions), list(res.cells), res.cost,
+            self.plan = Plan(goal, purpose, list(res.actions), list(res.cells), list(res.facings), res.cost,
                              [self.cell_risk(c) for c in res.cells])
         else:
             self.plan = None
-        e = self.log.add(self.turn, "ASTAR", (f"path to {goal}: {len(res.actions)} steps, cost {res.cost:.1f}"
+        e = self.log.add(self.turn, "ASTAR", (f"path to {goal}: {len(res.actions)} actions, cost {res.cost:.1f}"
                                               if res.found else f"no path to {goal}"), res.explain(), cell=goal)
         self.turn_entries["ASTAR"] = e.id
         if reason not in ("no plan", "previous plan completed"):
-            self.log.add(self.turn, "REPLAN", tag_reason, [f"old plan invalidated: {tag_reason}",
-                                                          f"new plan: see entry #{e.id}"], refs=[e.id])
+            self.log.add(self.turn, "REPLAN", reason, [f"old plan invalidated: {reason}",
+                                                      f"new plan: see entry #{e.id}"], refs=[e.id])
 
     # ---------------------------------------------------------------- adversarial
     def _goal_distance(self, goal: Pos) -> dict[Pos, float]:
-        """Dijkstra-like BFS distances to the goal over cells the explorer may use."""
-        ok = lambda c: c not in self.collapsed and (self._pit_known_safe(c) or c == goal or
-                                                    self.pit_prob.get(c, 1.0) <= self.cfg.max_explore_risk)
+        """BFS distances to the goal over cells the explorer may use (for the Minimax leaf value)."""
+        ok = lambda c: c not in self.collapsed and c != self.unstable_here and (
+            self._pit_known_safe(c) or c == goal or self.pit_prob.get(c, 1.0) <= self.cfg.max_explore_risk)
         dist, q = {goal: 0.0}, deque([goal])
         while q:
             c = q.popleft()
@@ -413,10 +523,13 @@ class ExplorerAgent:
 
     def _minimax_action(self, goal: Pos) -> ExplorerAction:
         cfg = self.cfg
-        game = DuelGame(size=self.info.size, pads=self.info.pads, blocked=frozenset(self._blocked()),
+        blocked = self._blocked() | ({self.unstable_here} if self.unstable_here else set())
+        blocked |= {c for c in self.portal_status if self._unknown_portal(c)}
+        game = DuelGame(size=self.info.size, portals=dict(self.portals), blocked=frozenset(blocked),
                         pit_risk={c: (0.0 if self._pit_known_safe(c) else p) for c, p in self.pit_prob.items()},
-                        goal_dist=self._goal_distance(goal), max_step_risk=cfg.max_explore_risk)
-        root = DuelState(self.pos, self.pos, True, self.arrows, self.jumps)
+                        goal_dist=self._goal_distance(goal), max_step_risk=cfg.max_explore_risk,
+                        jump_distance=self.info.jump_distance)
+        root = DuelState(self.pos, self.facing, self.pos, True, self.arrows, self.jump_available)
         hyps = self.tracker.top(cfg.minimax_hypotheses)
         res = determinized_decision(game, root, hyps, cfg.minimax_depth)
         e = self.log.add(self.turn, "MINIMAX", f"threat {self.threat:.0%} -> best {res.best_action} "
@@ -424,7 +537,7 @@ class ExplorerAgent:
                          res.explain(), refs=[self.turn_entries["WUMPUS_BELIEF"]])
         a = res.best_action
         if self.plan and self.plan.actions and self.plan.actions[0] == a:
-            self.plan.actions.pop(0), self.plan.cells.pop(0), self.plan.step_risk.pop(0)
+            self.plan.pop()
         else:
             self.plan = None           # tactical deviation: plan will be rebuilt next turn
             self.plan_dropped = f"Minimax deviated from the plan ({a})"

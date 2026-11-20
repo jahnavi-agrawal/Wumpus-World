@@ -167,3 +167,58 @@ A running log of major implementation decisions. Each milestone appends to it.
   always knows where the explorer is, so it is expected to beat the agent more often than not.
 * **Separation is tested twice:** an AST import check, and a replay test showing that the agent's
   actions are a pure function of the percept stream.
+
+## D7 — Environment v2 (M7, user specification)
+
+The user's environment spec replaced several v1 rules. v1 decisions D1 (Wumpus collapse/shuffle
+*powers*, public teleport pads, absolute moves) are **superseded** by:
+
+* **Facing + FORWARD / TURN_LEFT / TURN_RIGHT**, start facing RIGHT. A* state is now
+  `(cell, facing, jump_available)`; turns cost one action like the score does, so A* minimises
+  the real action count.
+* **Two hidden portal pairs** with a *portal signal* percept (like breeze). The KB gets symbols
+  `Oxy`/`Sxy` and the rule `Sc ⇔ ∨ O(neighbours)`. A pair is learned when the explorer teleports.
+  A cell proven to be a portal with an unknown destination is avoided unless the agent is stuck,
+  because its destination is unpredictable.
+* **Collapsing tiles** are hidden and collapse *after the explorer leaves*. The explorer feels an
+  unstable-floor warning while standing on one, so it knows exactly which cell becomes a pit and
+  when. Breezes sensed next to an already-collapsed tile are explained by it and are left out of
+  the pit inference (`valid_breeze`). The P symbols stay "original pits", so the KB stays static.
+* **Shuffle tiles** (single use): seeded deterministic swap of one pit with one empty cell, never on
+  visited cells, specials, the start zone or the generation route (so the route check stays valid).
+  The agent drops all older breeze evidence on the shuffle indicator, as in v1.
+* **Jump:** one use, lands 3 ahead, skips everything in between; hitting the wall = bump, jump kept.
+  `jump_cost = 3` keeps the A* heuristic admissible (3 cells for 3 cost).
+* **Percept type stays in `core/`**, because the AI must not import `environment/`.
+  `environment/percepts.py` *builds* it.
+* **The Wumpus only moves** (one legal cell or STAY). Its v1 powers were removed because the spec
+  makes collapse and shuffle tile mechanics.
+
+### Problems found by simulation after the switch, and their fixes
+Measured over 30 seeds per opponent. Before fixes: idle 8 W, random 7 W, hunter 0 W; 8 timeouts.
+
+1. **Trapped and idle.** A tile collapsing behind the explorer cut the proven-safe network from
+   the exit. The agent tried to "retreat", found no path and turned in place until the turn limit.
+   *Fix:* when cut off from the **exit**, A* may route through unexplored cells, still capped at
+   the normal risk limit and risk-costed. If even that fails, explore the cheapest frontier cell
+   (above the cap only when cut off from the exit, because staying is a certain loss).
+   Exploration targets never use this fallback.
+2. **Dithering.** Minimax alternated TURN_LEFT/TURN_RIGHT because turning did not change any leaf
+   value. *Fix:* the leaf goal distance is facing-aware (+1 sideways, +2 backwards), and
+   *anti-paralysis*: after 4 Minimax decisions in the same cell without being attacked, the Wumpus
+   is evidently not the worst-case attacker Minimax assumes, and the plan is followed until we leave
+   that cell (logged as WARNING).
+3. **Facing makes close combat lethal.** Turning costs a turn the Wumpus can use. *Fixes:* a leaf
+   with the Wumpus on our arrow line and our move is scored as a kill (the next ply is SHOOT).
+   "Adjacent, our move, not on our line" is scored close to lost (−600), which knows something
+   beyond the 4-ply horizon. On ties, prefer actions that do not die immediately.
+4. Found along the way: the agent preferred a 20 %-risk cell over a safe cell a few turns away.
+   *Fix:* safe-first tier: if any frontier cell has risk ≤ 5 %, only those are candidates.
+
+After the fixes: **idle 18 W / 12 L, random 16 W / 1 D / 13 L, hunter 3 W / 27 L**, worst decision 0.13 s.
+**Known trade-offs.** (a) The worst-case Minimax assumption occasionally makes the agent step into
+a 30–50 % Wumpus cell rather than stay next to a Wumpus it believes will attack. This costs games
+against a passive Wumpus but is right against an aggressive human. (b) The omniscient "hunter"
+test opponent always knows where the explorer is, while the explorer only smells it when adjacent.
+Under the spec's rules it wins most games. A human player is not omniscient in intent, and the
+agent beats random play about half the time.

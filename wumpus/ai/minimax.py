@@ -13,8 +13,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field, replace
 
-from ..core.actions import WAIT, ExplorerAction, ExplorerActionType
-from ..core.geometry import DIRECTIONS, Pos, in_bounds, manhattan, ray
+from ..core.actions import FORWARD, JUMP, SHOOT, TURN_LEFT, TURN_RIGHT, ExplorerAction
+from ..core.geometry import DIRECTIONS, Direction, Pos, in_bounds, manhattan, ray
 
 INF = math.inf
 
@@ -76,10 +76,11 @@ def alphabeta(game, s, depth: int, alpha: float = -INF, beta: float = INF,
 @dataclass(frozen=True)
 class DuelState:
     explorer: Pos
+    facing: Direction
     wumpus: Pos
     wumpus_alive: bool
     arrows: int
-    jumps: int
+    jump: bool
     explorer_to_move: bool = True
     explorer_dead: bool = False
     risk: float = 0.0          # accumulated pit risk along the explorer's line
@@ -97,11 +98,12 @@ class WumpusStep:
 @dataclass
 class DuelGame:
     size: int
-    pads: tuple[Pos, Pos] | None
-    blocked: frozenset[Pos]                # known pits + collapsed tiles
+    portals: dict[Pos, Pos]                # known portal pairs (symmetric)
+    blocked: frozenset[Pos]                # known pits + collapsed tiles (+ cell about to collapse)
     pit_risk: dict[Pos, float]             # P(pit) for unknown cells (0 for known safe)
-    goal_dist: dict[Pos, float]            # A*/BFS distance-to-goal over passable cells
+    goal_dist: dict[Pos, float]            # BFS distance-to-goal over usable cells
     max_step_risk: float = 0.30
+    jump_distance: int = 3
     w_death: float = 1000.0
     w_goal: float = 4.0
     w_dist: float = 6.0
@@ -109,9 +111,7 @@ class DuelGame:
     w_kill: float = 300.0
 
     def _land(self, c: Pos) -> Pos:
-        if self.pads and c in self.pads:
-            return self.pads[1] if c == self.pads[0] else self.pads[0]
-        return c
+        return self.portals.get(c, c)
 
     def is_max(self, s: DuelState) -> bool:
         return s.explorer_to_move
@@ -119,59 +119,71 @@ class DuelGame:
     def is_terminal(self, s: DuelState) -> bool:
         return s.explorer_dead or not s.wumpus_alive
 
+    def _landing(self, s: DuelState, a: ExplorerAction) -> Pos | None:
+        n = self.jump_distance if a is JUMP else 1
+        c = s.explorer.step(s.facing, n)
+        if not in_bounds(c, self.size):
+            return None
+        c = self._land(c)
+        if c in self.blocked or self.pit_risk.get(c, 0.0) > self.max_step_risk:
+            return None
+        return c
+
     def actions(self, s: DuelState) -> list:
         if s.explorer_to_move:
             acts: list = []
-            if s.arrows > 0 and s.wumpus_alive:
-                acts += [ExplorerAction.shoot(d) for d in DIRECTIONS if ray(s.explorer, d, self.size)]
-            for d in DIRECTIONS:
-                for a, c in ((ExplorerAction.move(d), s.explorer.step(d)),
-                             (ExplorerAction.jump(d), s.explorer.step(d, 2))):
-                    if a.kind is ExplorerActionType.JUMP and s.jumps == 0:
-                        continue
-                    if in_bounds(c, self.size):
-                        c = self._land(c)
-                        if c not in self.blocked and self.pit_risk.get(c, 0.0) <= self.max_step_risk:
-                            acts.append(a)
-            acts.append(WAIT)
-            # move ordering: shots first, then by goal distance (better pruning)
-            return sorted(acts, key=lambda a: (a.kind is not ExplorerActionType.SHOOT, self._order(s, a)))
+            if s.arrows > 0 and s.wumpus_alive and ray(s.explorer, s.facing, self.size):
+                acts.append(SHOOT)
+            if self._landing(s, FORWARD) is not None:
+                acts.append(FORWARD)
+            if s.jump and self._landing(s, JUMP) is not None:
+                acts.append(JUMP)
+            acts += [TURN_LEFT, TURN_RIGHT]
+            return acts
         acts = [WumpusStep(d) for d in DIRECTIONS
                 if in_bounds(s.wumpus.step(d), self.size) and s.wumpus.step(d) not in self.blocked]
         acts.append(WumpusStep(None))
-        return sorted(acts, key=lambda a: manhattan(self._land(s.wumpus.step(a.direction)) if a.direction else s.wumpus, s.explorer))
-
-    def _order(self, s: DuelState, a: ExplorerAction) -> float:
-        if a.direction is None:
-            return self.goal_dist.get(s.explorer, 99)
-        n = 2 if a.kind is ExplorerActionType.JUMP else 1
-        return self.goal_dist.get(self._land(s.explorer.step(a.direction, n)), 99)
+        return sorted(acts, key=lambda a: manhattan(self._land(s.wumpus.step(a.direction)) if a.direction
+                                                    else s.wumpus, s.explorer))
 
     def result(self, s: DuelState, a) -> DuelState:
         if s.explorer_to_move:
-            if a.kind is ExplorerActionType.SHOOT:
-                hit = s.wumpus in ray(s.explorer, a.direction, self.size)
+            if a is SHOOT:
+                hit = s.wumpus in ray(s.explorer, s.facing, self.size)
                 return replace(s, arrows=s.arrows - 1, wumpus_alive=not hit, explorer_to_move=False)
-            if a.kind in (ExplorerActionType.MOVE, ExplorerActionType.JUMP):
-                n = 2 if a.kind is ExplorerActionType.JUMP else 1
-                c = self._land(s.explorer.step(a.direction, n))
-                return replace(s, explorer=c, jumps=s.jumps - (n == 2), explorer_to_move=False,
+            if a is FORWARD or a is JUMP:
+                c = self._landing(s, a)
+                return replace(s, explorer=c, jump=s.jump and a is not JUMP, explorer_to_move=False,
                                explorer_dead=(c == s.wumpus), risk=s.risk + self.pit_risk.get(c, 0.0))
-            return replace(s, explorer_to_move=False)
+            f = s.facing.left() if a is TURN_LEFT else s.facing.right()
+            return replace(s, facing=f, explorer_to_move=False)
         w = self._land(s.wumpus.step(a.direction)) if a.direction else s.wumpus
         return replace(s, wumpus=w, explorer_to_move=True, explorer_dead=(w == s.explorer))
+
+    def facing_goal_cost(self, s: DuelState) -> int:
+        """Turns needed before the next step can make progress: 0 ahead, 1 sideways, 2 behind."""
+        here = self.goal_dist.get(s.explorer, 30)
+        good = [d for d in DIRECTIONS if self.goal_dist.get(self._land(s.explorer.step(d)), 99) < here]
+        if not good or s.facing in good:
+            return 0
+        return 2 if all(d == s.facing.left().left() for d in good) else 1
 
     def evaluate(self, s: DuelState) -> float:
         if s.explorer_dead:
             return -self.w_death
-        v = -self.w_death * s.risk - self.w_goal * self.goal_dist.get(s.explorer, 30) + self.w_arrow * s.arrows
+        goal = self.goal_dist.get(s.explorer, 30) + self.facing_goal_cost(s)
+        v = -self.w_death * s.risk - self.w_goal * goal + self.w_arrow * s.arrows
         if not s.wumpus_alive:
             return v + self.w_kill
+        if s.explorer_to_move and s.arrows > 0 and s.wumpus in ray(s.explorer, s.facing, self.size):
+            return v - self.w_arrow + self.w_kill      # shot is ready: next ply SHOOT kills it
         d = manhattan(s.explorer, s.wumpus)
         if d == 1 and not s.explorer_to_move:
             return -self.w_death            # the Wumpus moves next and will eat us
         if d == 1:
-            v -= 0.2 * self.w_death         # adjacent with our move: dangerous but escapable
+            # adjacent, our move, and it is NOT on our arrow line: turning to face it gets us eaten,
+            # so this is close to lost (only running forward helps). Beyond-horizon knowledge.
+            v -= 0.6 * self.w_death
         return v + self.w_dist * min(d, 4)
 
 
@@ -191,7 +203,7 @@ class MinimaxResult:
              "Expected value per root action  E[V(a)] = Σ_h P(h)·V_h(a):"]
         for a, v in sorted(self.root_values.items(), key=lambda kv: -kv[1]):
             mark = "  <== chosen" if a == self.best_action else ""
-            L.append(f"  {str(a):<9} {v:9.1f}{mark}")
+            L.append(f"  {str(a):<11} {v:9.1f}{mark}")
         for pos, p, vals, pv in self.hypotheses:
             L.append(f"Hypothesis W at {pos}  (belief {p:.1%}, renormalised)")
             L.append("  V: " + ", ".join(f"{a}={v:.0f}" for a, v in sorted(vals.items(), key=lambda kv: -kv[1])[:5]))
@@ -221,5 +233,8 @@ def determinized_decision(game: DuelGame, root: DuelState, hypotheses: list[tupl
                 best_v, best_pv = v, [a] + line
             combined[a] = combined.get(a, 0.0) + (p / total_p) * v
         hyp_out.append((pos, p / total_p, vals, best_pv))
-    best = max(root_actions, key=lambda a: (combined[a], -root_actions.index(a)))
+    # tie-break: prefer actions that do not die on the spot (a human may not play the worst case)
+    instant = {a: sum((p / total_p) * game.result(replace(root, wumpus=pos), a).explorer_dead
+                      for pos, p in hypotheses) for a in root_actions}
+    best = max(root_actions, key=lambda a: (combined[a], -instant[a], -root_actions.index(a)))
     return MinimaxResult(best, combined[best], combined, hyp_out, stats, depth)

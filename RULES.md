@@ -1,67 +1,75 @@
-# Game rules and state-transition rules
+# Game rules and state-transition rules (v2)
 
-All rules below are implemented in `wumpus/env/mechanics.py` and `wumpus/env/engine.py`
-and each has a test in `tests/test_mechanics.py` / `tests/test_engine.py`.
-Everything marked **(public)** is known to the explorer AI through `PublicInfo`/`Percept`.
+Implemented in `wumpus/environment/` (`world.py`, `mechanics.py`, `percepts.py`, `events.py`,
+`engine.py`); every rule has a test in `tests/test_mechanics.py` / `tests/test_engine.py`.
+**(public)** = known to the explorer AI via `PublicInfo` / `Percept`. Everything else is hidden.
 
-## Setup (seeded, `random.Random(config.seed)`)
+## Setup (seeded, reproducible)
 
-* 8×8 grid, coordinates `(x, y)`, start `S = (0,0)` bottom-left. **(public)**
-* **Safe start zone**: `S` and its orthogonal neighbours contain no pit. **(public)**
-* `pit_count` pits (default 7) placed uniformly on the remaining cells. Count is **(public)**, locations are hidden.
-* One pair of **teleporter pads** `A, B`; never pits, never in the start zone. Locations **(public)**.
-* **Gold** on a non-pit, non-pad cell outside the start zone. Hidden.
-* **Wumpus** on a non-pit, non-pad cell with Manhattan distance ≥ 3 from `S` **(rule public)**.
-* Generation retries until a pit-free walking path from `S` to the gold exists.
+* 8×8 grid, `(x, y)`, origin bottom-left. Explorer starts at `S = (0,0)` facing **RIGHT (E)**. **(public)**
+* **Safe start zone:** `S` and its orthogonal neighbours contain no pit, portal, special tile or
+  Wumpus, and the Wumpus starts at Manhattan distance ≥ 3 from `S`. **(public rule)**
+* **Special cells** (hidden locations, counts **(public)**), all outside the start zone and disjoint:
+  * 2 **portal pairs** (4 cells); the two cells of a pair are ≥ 3 apart.
+  * 3 **collapsing (unstable) tiles**.
+  * 2 **shuffle tiles**.
+* **Pits:** `round(13.5% × eligible)` pits, where *eligible* = cells outside the start zone that
+  are not special. With defaults: 52 eligible cells, 7 pits (13.5%). Count **(public)**.
+* **Gold** on an eligible non-pit cell. **Wumpus** on an eligible non-pit, non-gold cell.
+* **Route check:** a map is accepted only if a walking route `S → gold` exists that avoids pits,
+  unstable tiles and portals. Walking it back is then also valid, because no rule can ever change
+  a cell on it (see Shuffle). Otherwise the generator retries with the same RNG stream.
 
-## Percepts (delivered at the start of each explorer turn)
+## Explorer actions (one per turn; each costs 1 point)
 
-| Percept | True iff |
+| Action | Transition |
 |---|---|
-| `stench` | the living Wumpus is orthogonally adjacent to the explorer |
-| `breeze` | at least one orthogonally adjacent cell contains a pit (collapsed tiles do **not** cause breeze) |
-| `glitter` | the gold is in the explorer's cell |
-| `scream` | the Wumpus was killed by the explorer's arrow this turn |
-| `events` | public events since the explorer's last turn: `COLLAPSE(pos)`, `SHUFFLE` |
+| `FORWARD` | target = pos + facing. Out of bounds → **bump**, nothing else happens. Else **leave** pos, **arrive** at target. |
+| `TURN_LEFT` / `TURN_RIGHT` | facing rotates 90°. |
+| `JUMP` | Only if the jump is unused and pos + 3·facing is in bounds (else **bump**, jump not used). Jump is used up; the 2 intermediate cells are crossed with no effect (pits, Wumpus, tiles and portals are all skipped); **leave** pos, **arrive** at pos + 3·facing. |
+| `GRAB` | If gold is here: `has_gold = True`. Otherwise nothing. |
+| `SHOOT` | If arrows > 0: arrows −1, extra −10 points; the arrow flies along facing to the wall (over pits). If the living Wumpus is on that ray it dies → **scream**. |
+| `CLIMB` | Only at `S`: game ends. Elsewhere nothing. |
 
-## Explorer actions (one per turn)
+**Leave cell c:** if `c` is an unstable tile, it **collapses into a pit** (permanent).
+**Arrive at cell c:**
+1. If `c` is a portal, the entity moves to the paired portal (no chaining) → `teleported`.
+2. Final cell is a pit → explorer **falls** (dies). Final cell holds the living Wumpus → **eaten**.
+3. Otherwise the cell is visited. If it is an unused shuffle tile → **shuffle** (below), then the tile is used up.
 
-| Action | Precondition | Transition |
-|---|---|---|
-| `MOVE d` | target in bounds | explorer → target; then **resolve landing** |
-| `JUMP d` | `jumps_left > 0`, landing `pos+2d` in bounds | `jumps_left -= 1`; middle cell is skipped completely (no hazard, no percept, not visited); explorer → landing; **resolve landing** |
-| `SHOOT d` | `arrows > 0` | `arrows -= 1`; arrow flies along the ray until the wall, over pits; if the living Wumpus is on the ray it dies → `scream` |
-| `GRAB` | gold in cell | `has_gold = True`, gold removed from map |
-| `CLIMB` | explorer at `S` | game ends: with gold → **Explorer wins**, without → **Draw (retreat)** |
-| `WAIT` | — | nothing |
-
-**Resolve landing** (explorer or Wumpus arriving at cell `c` by walking or jumping):
-1. If `c` is a pad, the entity is moved to the paired pad (`c := pair(c)`); no chaining.
-2. Explorer: `c` pit or collapsed → **dies (fell)**; `c` holds the living Wumpus → **dies (eaten)**.
-   Otherwise `c` is marked visited.
+**Shuffle (seeded deterministic swap):** let *E* = cells that are not visited, not the explorer or
+Wumpus cell, not gold, not special, not in the start zone, not a collapsed pit and not on the
+generation route. With `rng = Random(f"{seed}:shuffle:{tile}:{step}")`, pick one original pit in
+*E* and one empty cell in *E* (both lists sorted), and swap their contents (the pit moves). If
+either list is empty, nothing moves. The explorer perceives only that a shuffle happened.
 
 ## Wumpus (human) actions (one per turn)
 
-| Action | Precondition | Transition |
-|---|---|---|
-| `MOVE d` | target in bounds, not a pit, not collapsed | Wumpus → target; pad teleports it; if it ends on the explorer → **explorer eaten** |
-| `STAY` | — | nothing |
-| `COLLAPSE c` | charges > 0, cooldown = 0, `manhattan(wumpus, c) ≤ collapse_range` (2), `c` not `S`, not explorer cell, not Wumpus cell, not pit, not pad, not gold, not collapsed | `c` becomes collapsed (permanent, deadly, impassable for both). Wumpus does not move. Event `COLLAPSE(c)` is public. charges −1, cooldown := 3 |
-| `SHUFFLE` | charges > 0 (default 1) | All pits are removed and the same number re-placed uniformly at random on cells that are **not** visited by the explorer, not the explorer/Wumpus cell, not collapsed, not pads, not gold, not the safe start zone. Wumpus does not move. Event `SHUFFLE` is public. |
+* `MOVE d` (N/E/S/W): target in bounds and not a pit (collapsed tiles are pits). Walls and pits
+  block it. Portals teleport it like the explorer. Entering the explorer's cell **eats** the explorer.
+* `STAY`: always legal. Unstable and shuffle tiles have no effect on the Wumpus.
+* A dead Wumpus has no turn.
 
-The cooldown decreases by 1 at the end of every Wumpus turn. The dead Wumpus has no actions.
+## Percepts (at the start of each explorer turn)
 
-## Consequences the explorer can rely on (all derivable from the public rules)
+| Percept | True iff |
+|---|---|
+| breeze | a pit is orthogonally adjacent (collapsed tiles are pits) |
+| stench | the living Wumpus is orthogonally adjacent |
+| glitter | gold is in the explorer's cell |
+| bump | the last FORWARD/JUMP hit the wall |
+| scream | the last SHOOT killed the Wumpus |
+| portal_signal | a portal is orthogonally adjacent |
+| unstable | the explorer stands on an unstable tile (it collapses when it is left) |
+| shuffled | the last action triggered a shuffle tile |
+| teleported | the last action ended in a teleport |
 
-* A visited cell is pit-free forever (shuffle never puts pits on visited cells).
-* A collapsed cell was not a pit before collapsing.
-* A `COLLAPSE(c)` event means the Wumpus stood still this turn within distance 2 of `c`.
-* A `SHUFFLE` invalidates every breeze observation made before it.
-* Surviving a move into `c` means the Wumpus was not in `c`.
-* A missed arrow means the Wumpus was not on that ray.
+The percept also carries the explorer's own state: position, facing, step, score, has_gold, arrows,
+jump_available. These are things the explorer knows about itself, not hidden world facts.
 
-## End conditions
+## Turn sequence and end conditions
 
-* Explorer climbs out with gold → **Explorer wins**.
-* Explorer climbs out without gold → **Draw**.
-* Explorer falls or is eaten, or `max_turns` (150) is reached → **Wumpus wins**.
+`explorer action → (if game not over and Wumpus alive) Wumpus action → turn + 1`.
+Explorer climbs out with gold: **win** (+1000). Climbs out without gold: **draw**. Falls or is
+eaten: **loss** (−1000). Turn 150 is reached: **loss** (timeout).
+Every action produces structured `GameEvent`s (see `environment/events.py`).

@@ -7,7 +7,7 @@ from wumpus.ai.logic import DungeonKB
 from wumpus.ai.probability import estimate_pits
 from wumpus.config import GameConfig
 from wumpus.core.geometry import Pos, all_cells, neighbors
-from wumpus.env.engine import GameEngine
+from wumpus.environment.engine import GameEngine
 
 INFO = GameEngine(GameConfig(seed=1)).public_info()
 
@@ -40,7 +40,7 @@ def test_kb_proven_cells_fixed():
 
 def brute_force(visited, breezy, prior, query):
     """Full joint enumeration over all unknown cells near the evidence (ground truth)."""
-    unknown = sorted({n for v in visited for n in neighbors(v, 8)} - set(visited) - INFO.safe_start_zone - set(INFO.pads))
+    unknown = sorted({n for v in visited for n in neighbors(v, 8)} - set(visited) - INFO.safe_start_zone)
     num = den = 0.0
     for bits in itertools.product([0, 1], repeat=len(unknown)):
         pits = {c for c, b in zip(unknown, bits) if b}
@@ -56,7 +56,7 @@ def brute_force(visited, breezy, prior, query):
 @pytest.mark.parametrize("seed", range(15))
 def test_matches_brute_force_on_random_evidence(seed):
     rng = random.Random(seed)
-    truth = set(rng.sample([c for c in all_cells(8) if c not in INFO.safe_start_zone and c not in INFO.pads], 9))
+    truth = set(rng.sample([c for c in all_cells(8) if c not in INFO.safe_start_zone], 9))
     visited, frontier = [Pos(0, 0)], [Pos(0, 0)]
     while frontier and len(visited) < 7:   # random safe walk
         p = frontier.pop(rng.randrange(len(frontier)))
@@ -66,5 +66,5 @@ def test_matches_brute_force_on_random_evidence(seed):
                 frontier.append(n)
     breezy = {v for v in visited if any(n in truth for n in neighbors(v, 8))}
     r = run(visited, breezy, 0.15)
-    for c in sorted({n for v in visited for n in neighbors(v, 8)} - set(visited) - INFO.safe_start_zone - set(INFO.pads)):
+    for c in sorted({n for v in visited for n in neighbors(v, 8)} - set(visited) - INFO.safe_start_zone):
         assert r[c].p_pit == pytest.approx(brute_force(visited, breezy, 0.15, c), abs=1e-9)

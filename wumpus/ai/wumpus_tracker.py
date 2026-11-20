@@ -5,15 +5,13 @@
 Evidence used (all deterministic likelihoods 0/1, derived from public rules):
   * explorer survived entering cell p          -> W ≠ p
   * arrow missed along a ray                   -> W ∉ ray
-  * COLLAPSE(c) event                          -> W stayed, manhattan(W, c) ≤ collapse_range
-  * SHUFFLE event                              -> W stayed
   * explorer not eaten after the Wumpus turn   -> W ≠ explorer
   * stench / no stench at explorer cell p      -> W ∈ N(p) / W ∉ N(p)
 Motion model T (an ASSUMPTION about the human, see DECISIONS.md D3):
   stay with p_stay; otherwise with p_pursuit move uniformly among moves that reduce the
   Manhattan distance to the explorer, else uniformly among all legal moves. Moves into a
   cell are weighted by (1 - P(pit)) because the Wumpus cannot enter pits; known pits and
-  collapsed tiles are excluded. Pads teleport the Wumpus to the paired pad.
+  collapsed tiles are excluded. Portals the explorer has discovered teleport the Wumpus.
 """
 from __future__ import annotations
 
@@ -57,14 +55,13 @@ class WumpusTracker:
         self.stay_prob = stay_prob
         self.pursuit_prob = pursuit_prob
         self.alive = True
+        self.portals: dict[Pos, Pos] = {}          # learned portal pairs (symmetric)
         self.belief: dict[Pos, float] = self._initial()
         self.report = TrackerReport(0, True)
 
     def _initial(self, exclude: set[Pos] = frozenset()) -> dict[Pos, float]:
-        pads = set(self.info.pads or ())
         cells = [c for c in all_cells(self.size)
-                 if manhattan(c, self.info.start) >= self.info.wumpus_min_start_distance
-                 and c not in pads and c not in exclude]
+                 if manhattan(c, self.info.start) >= self.info.wumpus_min_start_distance and c not in exclude]
         return {c: 1.0 / len(cells) for c in cells}
 
     # ------------------------------------------------------------------ bookkeeping
@@ -83,9 +80,8 @@ class WumpusTracker:
             # Model mismatch (the human did something our motion model gave probability 0).
             # Recover by restarting from a uniform belief over cells consistent with this turn.
             self.report.reset = "evidence contradicted the motion model; belief reset to uniform"
-            pads = set(self.info.pads or ())
             cells = list(fallback_cells) if fallback_cells else [
-                c for c in all_cells(self.size) if c not in fallback_exclude and c not in pads]
+                c for c in all_cells(self.size) if c not in fallback_exclude]
             self.belief = {c: 1.0 / len(cells) for c in cells}
         else:
             self.belief = {c: p / total for c, p in self.belief.items() if p > 0}
@@ -103,10 +99,6 @@ class WumpusTracker:
     def observe_arrow_missed(self, cells: list[Pos]) -> None:
         s = set(cells)
         self._apply(f"arrow missed along {len(cells)} cells", lambda c: c not in s)
-
-    def observe_collapse(self, target: Pos, rng: int) -> None:
-        self._apply(f"COLLAPSE {target}: W stayed, within {rng} of it",
-                    lambda c: manhattan(c, target) <= rng)
 
     def observe_stench(self, p: Pos, stench: bool) -> None:
         nb = set(neighbors(p, self.size))
@@ -140,10 +132,7 @@ class WumpusTracker:
         return out
 
     def _pad(self, n: Pos) -> Pos:
-        if self.info.pads and n in self.info.pads:
-            a, b = self.info.pads
-            return b if n == a else a
-        return n
+        return self.portals.get(n, n)
 
     def predict(self, explorer: Pos, blocked: set[Pos], pit_prob: dict[Pos, float]) -> None:
         new: dict[Pos, float] = {}

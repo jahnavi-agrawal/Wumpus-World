@@ -30,6 +30,16 @@ class Direction(Enum):
     def dy(self) -> int:
         return self.value[1]
 
+    def left(self) -> "Direction":
+        return DIRECTIONS[(DIRECTIONS.index(self) - 1) % 4]
+
+    def right(self) -> "Direction":
+        return DIRECTIONS[(DIRECTIONS.index(self) + 1) % 4]
+
+    @property
+    def label(self) -> str:
+        return {"N": "UP", "E": "RIGHT", "S": "DOWN", "W": "LEFT"}[self.name]
+
 
 DIRECTIONS: tuple[Direction, ...] = (Direction.N, Direction.E, Direction.S, Direction.W)
 

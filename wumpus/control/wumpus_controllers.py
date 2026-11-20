@@ -52,7 +52,7 @@ def _bfs_dist(world, src: Pos) -> dict[Pos, int]:
     while q:
         p = q.popleft()
         for n in neighbors(p, world.size):
-            if n not in dist and not world.is_blocked_for_wumpus(n):
+            if n not in dist and n not in world.pits:
                 dist[n] = dist[p] + 1
                 q.append(n)
     return dist

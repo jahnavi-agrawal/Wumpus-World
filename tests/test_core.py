@@ -1,5 +1,5 @@
 from wumpus.core.geometry import Direction, Pos, direction_between, manhattan, neighbors, ray
-from wumpus.core.actions import ExplorerAction, WumpusAction
+from wumpus.core.actions import JUMP, WumpusAction
 
 
 def test_neighbors_corner_and_order():
@@ -20,5 +20,11 @@ def test_step_and_manhattan():
 
 
 def test_action_str():
-    assert str(ExplorerAction.jump(Direction.E)) == "JUMP E"
-    assert str(WumpusAction.collapse((2, 3))) == "COLLAPSE (2,3)"
+    assert str(JUMP) == "JUMP"
+    assert str(WumpusAction.move(Direction.N)) == "MOVE N"
+
+
+def test_turning():
+    assert Direction.E.left() is Direction.N and Direction.E.right() is Direction.S
+    assert Direction.N.left() is Direction.W and Direction.W.right() is Direction.N
+    assert Direction.E.label == "RIGHT"
