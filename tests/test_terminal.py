@@ -128,5 +128,5 @@ def test_inspect_shows_dependencies():
 
 def test_main_cli_runs_headless(capsys):
     import main
-    main.main(["--seed", "5", "--wumpus", "idle", "--no-board", "--max-turns", "30"])
+    main.main(["--terminal", "--seed", "5", "--wumpus", "idle", "--no-board", "--max-turns", "30"])
     assert "GAME OVER" in capsys.readouterr().out

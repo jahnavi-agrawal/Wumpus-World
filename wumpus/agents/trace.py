@@ -2,6 +2,7 @@
 object (`explain()`), never written by hand, so every line in the UI can be inspected."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from ..core.geometry import Pos
@@ -19,6 +20,7 @@ class TraceEntry:
     details: list[str] = field(default_factory=list)
     refs: list[int] = field(default_factory=list)      # ids of entries this one depends on
     cell: Pos | None = None                            # board cell to highlight
+    created: float = field(default_factory=time.time, compare=False)   # wall-clock timestamp
 
     def line(self) -> str:
         return f"[{self.tag}] {self.summary}"

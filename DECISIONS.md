@@ -350,3 +350,30 @@ agent beats random play about half the time.
 * **Fixed-dungeon integration tests** live in `evaluation/scenarios.py` (10 scenarios, shared with
   the evaluation) and `tests/test_integration.py`.
 * Sweep after these changes (30 seeds): idle 21 W / 9 L, random 15 W / 2 D / 13 L, hunter 4 W / 26 L.
+
+## D13 — Pygame interface (Prompt 5)
+
+* **Layout and design tokens** come from the specification (`ui/theme.py`): 1280×800, 56 px header,
+  two equal cards (REALITY | AGENT'S MIND), 204 px Brain Activity panel, 50 px tiles with 6 px gaps,
+  14 px radii, the exact hex colours, and monospace for telemetry and logs. A test checks these values.
+* **Two independent data sources.** `ui/session.py` builds a `RealitySnapshot` from a copy of the
+  hidden world, and a `MindSnapshot` **only** from the explorer (`agent.knowledge()`, hazards, plan,
+  decision report). `draw_mind` receives only the MindSnapshot; a test draws it from an agent that
+  never had an engine. The Mind panel shows the agent "as perceived at turn N": the explorer
+  appears where it last observed itself, because it learns the result of its newest action only
+  from the next percept. The Reality panel already shows the new position.
+* **Non-blocking AI.** The explorer's `act()` (KB, Bayes, A*, Minimax) runs in a worker thread.
+  The engine is only mutated on the main thread, after the worker finishes. A test makes `act()`
+  sleep 0.4 s and checks frames keep flowing (< 0.25 s each).
+* **Brain Activity rows are the agent's `TraceEntry` objects** (structured: id, turn, tag, summary,
+  details, refs, cell, timestamp). Colours: INFERENCE #10B981, RISK_CALC #FACC15, A*_PLANNER
+  #38BDF8, MINIMAX #A78BFA, DECISION #F87171. Clicking a row opens the stored evidence; clicking a
+  dependency follows it. "F" toggles key tags vs. everything.
+* **Icons are vector-drawn** (`ui/icons.py`): chevron explorer, horned Wumpus, vortex pit, faceted
+  octagon gold, hexagonal S/B, violet portal, cracked floor, interlocking arrows. No assets, no emoji.
+  Logic symbols (∨, ¬, Σ, …) are mapped to ASCII when rendered, so any monospace font works.
+* **Animations** are driven by the engine's structured `GameEvent`s: movement tweens (jumps arc),
+  teleport rings, collapse/shuffle/gold/hit flashes, and pulses on newly inferred cells and new A*
+  routes. The next step waits until movement tweens finish.
+* **Bug found by the UI tests:** cached `pygame.font.Font` objects became invalid after
+  `pygame.quit()` and crashed the next session natively; the cache is now reset on every init.
