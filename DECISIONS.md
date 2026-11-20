@@ -377,3 +377,18 @@ agent beats random play about half the time.
   routes. The next step waits until movement tweens finish.
 * **Bug found by the UI tests:** cached `pygame.font.Font` objects became invalid after
   `pygame.quit()` and crashed the next session natively; the cache is now reset on every init.
+
+## D14 — Evaluation (Prompt 6)
+
+* **Ablations share one code base.** `AgentConfig(use_bayes, use_minimax)` switches components off
+  inside the same agent. logic+A* treats every unproven cell as fatal and uses only KB Wumpus facts;
+  logic+bayes+A* skips Minimax. The random baseline is a separate 10-line agent.
+* **Held-out maps:** development used seeds 0-29; the benchmark uses seeds 1000-1099 for every
+  cell of the table, so all agents face identical dungeons.
+* **Opponents are automated (AI vs AI)**: random, greedy omniscient hunter, and the Minimax Wumpus.
+  Human games are only demonstrated (GUI/terminal) and never mixed into the statistics.
+* **Metric definitions:** survival = explorer alive at the end (win, draw or timeout); timeout =
+  turn 150 reached; planning time = wall-clock time of `agent.act()` per decision.
+* **Results are reported as measured**, including the unflattering ones: logic-only gets the best
+  average score through cautious draws; nothing beats the omniscient Minimax Wumpus more than 6% of
+  the time; and the held-out win rate is below the development-seed rate.

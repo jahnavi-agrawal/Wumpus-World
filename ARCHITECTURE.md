@@ -3,47 +3,37 @@
 Human plays the **Wumpus** (omniscient, sees the whole dungeon).
 AI plays the **Explorer** (partial observability, sees only its own percepts).
 
-## 1. Folder structure
+## 1. Folder structure (current)
 
 ```
 .
-├── main.py                     # entry point: python main.py [--seed N] [--wumpus human|idle|random|hunter]
-├── requirements.txt            # pygame, pytest  (nothing else)
-├── ARCHITECTURE.md             # this file
-├── RULES.md                    # game rules + state-transition rules of every mechanic
-├── DECISIONS.md                # why each algorithm / simplification was chosen
+├── main.py                     # GUI (default) | --terminal | --seed N | --wumpus human|idle|random|hunter|minimax
+├── requirements.txt            # pygame, pytest
+├── README.md, RULES.md, DECISIONS.md, ARCHITECTURE.md
 ├── wumpus/
-│   ├── config.py               # GameConfig dataclass (all tunables, seed)
-│   ├── core/                   # SHARED, contains no hidden information
-│   │   ├── geometry.py         # Pos, Direction, neighbors, rays, manhattan
-│   │   ├── actions.py          # ExplorerAction, WumpusAction
-│   │   └── percepts.py         # Percept, PublicEvent, PublicInfo
-│   ├── environment/            # HIDDEN GROUND TRUTH — the AI may never import this
-│   │   ├── world.py            # WorldState + seeded generation + route check
-│   │   ├── mechanics.py        # transition rules: forward/turn/jump/teleport/collapse/shuffle/shoot
+│   ├── config.py               # GameConfig (rules, seed), AgentConfig (agent parameters, ablation flags)
+│   ├── core/                   # SHARED, no hidden information: geometry, actions, percepts (Percept, PublicInfo)
+│   ├── environment/            # HIDDEN GROUND TRUTH - the explorer may never import this
+│   │   ├── world.py            # WorldState, seeded generation, route check
+│   │   ├── mechanics.py        # transition rules (forward/turn/jump/teleport/collapse/shuffle/shoot/Wumpus)
 │   │   ├── percepts.py         # builds the explorer's Percept from the hidden world
-│   │   ├── events.py           # structured GameEvent output for every action
+│   │   ├── events.py           # structured GameEvent for every action
 │   │   └── engine.py           # GameEngine: turn sequence, score, status, outcome
-│   ├── ai/                     # explorer brain — sees only core.* objects
-│   │   ├── trace.py            # BrainLog / TraceEntry (traceable "Brain Activity")
-│   │   ├── logic.py            # propositional CNF, DPLL, KnowledgeBase
-│   │   ├── probability.py      # Bayesian pit probability (frontier enumeration)
-│   │   ├── wumpus_tracker.py   # Bayesian (HMM) filter over the moving Wumpus
-│   │   ├── pathfinding.py      # A* (moves + jumps + teleport pads)
-│   │   ├── minimax.py          # Minimax with alpha-beta pruning
-│   │   └── explorer.py         # ExplorerAgent: belief update, planning, replanning
-│   ├── terminal.py             # terminal version (rendering, commands, game loop)
-│   ├── runner.py               # headless game loop (simulation, tests)
-│   ├── control/
-│   │   └── wumpus_controllers.py  # HumanWumpusController (UI-fed), ScriptedWumpusController
-│   └── ui/                     # pygame only lives here
-│       ├── theme.py            # neon palette, fonts, layout constants (1280x800)
-│       ├── icons.py            # vector-drawn icons (no sprite assets)
-│       ├── board_view.py       # 8x8 board + knowledge overlay
-│       ├── brain_panel.py      # clickable Brain Activity log + evidence inspector
-│       ├── hud.py              # status / powers / controls help
-│       └── app.py              # main loop, input → HumanWumpusController
-└── tests/                      # pytest, one file per module + integration + separation
+│   ├── agents/                 # the explorer - may only import core/
+│   │   ├── knowledge_base.py   # propositional KB, DPLL, entailment, contradiction cores, DungeonKB
+│   │   ├── bayesian.py         # pit enumeration + HazardEstimate (pit / Wumpus / death / confidence)
+│   │   ├── wumpus_tracker.py   # HMM forward filter over the moving Wumpus
+│   │   ├── pathfinding.py      # A*, strict / risk-tolerant planning, alternative routes
+│   │   ├── minimax.py          # alpha-beta, DuelGame, determinized decision, structured output
+│   │   ├── explorer.py         # decision pipeline, KnowledgeSnapshot, DecisionReport
+│   │   └── trace.py            # BrainLog / TraceEntry
+│   ├── control/                # Wumpus controllers: human, scripted, Minimax AI
+│   ├── ui/                     # Pygame: theme, icons, session (threaded AI), anim, board_view, brain_panel, app
+│   ├── terminal.py             # terminal version
+│   └── runner.py               # headless game loop
+├── evaluation/                 # scenarios.py (10 fixed dungeons), benchmark.py, screenshots.py, results/
+├── docs/screenshots/           # captured from the real interface
+└── tests/                      # unit, integration, separation and UI tests
 ```
 
 ## 2. Module responsibilities
@@ -64,7 +54,7 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 | `control.*` | Who decides the Wumpus action: human (queue filled by UI) or scripted (tests/demo). | core |
 | `ui.*` | Rendering and input. No game logic. | everything |
 
-**Separation guarantee:** `tests/test_separation.py` parses every file in `wumpus/ai/` with `ast`
+**Separation guarantee:** `tests/test_separation.py` parses every file in `wumpus/agents/` with `ast`
 and fails if it imports `wumpus.environment` (or `wumpus.ui`). The engine only hands the agent
 `PublicInfo` (once) and `Percept` objects (every turn).
 
