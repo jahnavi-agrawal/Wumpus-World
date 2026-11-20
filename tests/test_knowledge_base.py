@@ -76,3 +76,16 @@ def test_symbol_names():
     from wumpus.agents.knowledge_base import BREEZE, SAFE, STENCH, WUMPUS
     assert (P(Pos(2, 3)), WUMPUS(Pos(3, 4)), SAFE(Pos(2, 2)), BREEZE(Pos(2, 2)), STENCH(Pos(3, 3))) == \
         ("PIT_2_3", "WUMPUS_3_4", "SAFE_2_2", "BREEZE_2_2", "STENCH_3_3")
+
+
+def test_cached_components_match_reference():
+    import random
+    from wumpus.agents.knowledge_base import KnowledgeBase
+    rng = random.Random(3)
+    for _ in range(30):
+        kb = KnowledgeBase()
+        for _ in range(rng.randint(1, 25)):
+            kb.tell([kb.lit(f"v{rng.randint(1, 15)}", rng.random() < 0.5) for _ in range(rng.randint(1, 3))], "r")
+        for name in list(kb._ids):
+            v = kb.var(name)
+            assert list(kb._component(v)) == kb._component_slow(v)

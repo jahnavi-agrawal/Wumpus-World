@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from .agents.explorer import ExplorerAgent
 from .config import GameConfig
-from .control.wumpus_controllers import ScriptedWumpusController
+from .control.wumpus_controllers import make_controller
 from .core.actions import STAY, WumpusAction
 from .core.geometry import Direction, Pos
 from .environment.engine import GameEngine, Phase
@@ -181,7 +181,7 @@ def run(config: GameConfig, wumpus: str = "human", inp=input, out=print, show_bo
     """Play one game. `wumpus` is 'human' or a scripted mode ('idle', 'random', 'hunter')."""
     engine = GameEngine(config)
     agent = ExplorerAgent(engine.public_info())
-    bot = None if wumpus == "human" else ScriptedWumpusController(wumpus, config.seed)
+    bot = None if wumpus == "human" else make_controller(wumpus, config.seed)
     out(f"WUMPUS: THE MIND GAMES - terminal edition (seed {config.seed}, Wumpus: {wumpus})")
     out(LEGEND)
     if bot is None:

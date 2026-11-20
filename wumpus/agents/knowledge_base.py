@@ -87,7 +87,17 @@ class InferenceResult:
     entailed: bool
     nodes: int
     propagations: int
-    relevant: list[tuple[str, str]] = field(default_factory=list)   # (clause text, source)
+    _kb: object = field(default=None, repr=False, compare=False)
+    _idx: tuple = field(default=(), repr=False, compare=False)
+    _relevant: list | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def relevant(self) -> list[tuple[str, str]]:
+        """(clause text, source) of the clauses the solver used; built lazily for display."""
+        if self._relevant is None:
+            kb = self._kb
+            self._relevant = [(kb.clause_text(kb.clauses[i]), kb.sources[i]) for i in self._idx] if kb else []
+        return self._relevant
 
     def because(self) -> list[str]:
         """Distinct evidence (percepts and rules) behind the clauses the solver used."""
@@ -131,6 +141,7 @@ class KnowledgeBase:
         self.sources: list[str] = []
         self.valid_turn: list[int | None] = []      # None = permanent; t = only valid at turn t
         self._seen: set[frozenset[int]] = set()
+        self._components: dict[int, tuple[int, ...]] | None = None   # var -> clause indices (cache)
 
     def var(self, name: str) -> int:
         if name not in self._ids:
@@ -150,6 +161,7 @@ class KnowledgeBase:
         self.clauses.append(c)
         self.sources.append(source)
         self.valid_turn.append(valid_turn)
+        self._components = None
 
     def time_sensitive(self) -> list[tuple[str, str, int]]:
         return [(self.clause_text(c), s, t) for c, s, t in zip(self.clauses, self.sources, self.valid_turn)
@@ -172,8 +184,30 @@ class KnowledgeBase:
     def clause_text(self, c: frozenset[int]) -> str:
         return " ∨ ".join(("" if l > 0 else "¬") + self._names[abs(l)] for l in sorted(c, key=abs))
 
-    def _component(self, var: int) -> list[int]:
-        """Indices of clauses connected to `var` through shared symbols."""
+    def _component(self, var: int) -> tuple[int, ...]:
+        """Indices of clauses connected to `var` through shared symbols (all components are
+        computed once per KB with union-find and cached until the next tell)."""
+        if self._components is None:
+            parent: dict[int, int] = {}
+
+            def find(a):
+                while parent.setdefault(a, a) != a:
+                    parent[a] = parent[parent[a]]
+                    a = parent[a]
+                return a
+            for c in self.clauses:
+                vs = [abs(l) for l in c]
+                for v in vs[1:]:
+                    parent[find(v)] = find(vs[0])
+                find(vs[0])
+            groups: dict[int, list[int]] = {}
+            for i, c in enumerate(self.clauses):
+                groups.setdefault(find(abs(next(iter(c)))), []).append(i)
+            self._components = {v: tuple(groups[find(v)]) for v in parent}
+        return self._components.get(var, ())
+
+    def _component_slow(self, var: int) -> list[int]:
+        """Reference implementation of _component (used in tests)."""
         by_var: dict[int, list[int]] = {}
         for i, c in enumerate(self.clauses):
             for l in c:
@@ -203,8 +237,7 @@ class KnowledgeBase:
         idx = self._component(abs(lit))
         stats = SolverStats()
         sat = dpll([self.clauses[i] for i in idx] + [frozenset([-lit])], stats=stats)
-        rel = [(self.clause_text(self.clauses[i]), self.sources[i]) for i in idx]
-        return InferenceResult(q, sat is None, stats.nodes, stats.propagations, rel)
+        return InferenceResult(q, sat is None, stats.nodes, stats.propagations, self, tuple(idx))
 
 
 # ----------------------------------------------------------------------- domain encoding

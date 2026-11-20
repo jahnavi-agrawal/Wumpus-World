@@ -289,3 +289,40 @@ agent beats random play about half the time.
 * The A* core (`astar`) is unchanged; the planning layer only builds the cost function from a
   `RiskModel` (knowledge only) and runs it in several configurations. Play results are identical
   to before the refactor (30-seed sweep).
+
+## D11 — Minimax per the adversarial-search specification (Prompt 3)
+
+* **Evaluation terms** (`DuelGame.evaluate`, leaf from the explorer's side):
+  survival (−1000 if eaten, or adjacent with the Wumpus to move; −600 adjacent and not in our
+  line of fire), progress toward the current goal (facing-aware BFS distance, ×4), ability to
+  return to the entrance (−1 per step of exit distance, −40 if the exit is unreachable), estimated
+  hazard risk (−1000 × accumulated P(pit)), distance from the hypothesised Wumpus (+6 per step,
+  capped at 4), remaining abilities (+60 arrow, +20 unused jump), escape routes (+8 per usable
+  neighbour not adjacent to the Wumpus, up to 3), and +300 for a dead Wumpus or a ready shot.
+  The search sees *gold* progress only through the current goal, because the gold's location is
+  unknown until glitter; after the grab, the goal is the exit.
+* **Structured output:** `MinimaxResult.to_dict()` holds candidate actions with E[V], the predicted
+  Wumpus reply to each candidate under each hypothesis, depth, the selected action, cutoff count,
+  the number of pruned sibling moves, and the first 40 pruned branches (path, cut type, α, β, skipped moves).
+* **Prediction checking:** after a search, the agent stores the reply predicted for the chosen action
+  under the most likely hypothesis, and the cell it implies. On the next turn, if the filter gives
+  that cell < 5% after the new evidence, the human did something else: the prediction and the plan
+  built on it are discarded (logged as REPLAN) and the agent replans from the updated belief.
+* **AI-controlled Wumpus** (`MinimaxWumpusController`, `--wumpus minimax`): same legal actions, same
+  `DuelGame` and evaluation, from the MIN side and with perfect information, because the Wumpus is
+  omniscient. Used only for AI-vs-AI benchmarking, never mixed into human-vs-AI results.
+
+### Assumptions and limitations under partial observability
+1. **Determinization** treats each of the top-4 Wumpus positions as if it were known. The agent
+   may then pick an action that is good on average over worlds it can't tell apart, when no single
+   real strategy achieves that average ("strategy fusion"). The fix would be belief-state search
+   (POMDP / information-set search), far too expensive at this size in pure Python.
+2. **Worst-case opponent:** MIN is assumed optimal. Against a passive human this makes the agent
+   over-cautious (D7 trade-off a); anti-paralysis limits the damage.
+3. **No chance nodes for pits:** pit risk is charged along the line (−1000·risk) instead of
+   branching, so it is pure minimax, not expectiminimax.
+4. **Horizon of 4 plies:** threats that develop later are only approximated by the leaf terms
+   ("adjacent and not facing it ≈ lost").
+5. **Belief truncation:** hypotheses outside the top 4 are ignored; their mass is renormalised away.
+* **Performance:** KB connected components are now computed once per KB with union-find (cached),
+  and clause texts are built only when an explanation is displayed. Three games went from 34 s to 4.3 s.

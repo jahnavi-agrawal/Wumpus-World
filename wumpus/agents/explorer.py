@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 
 from ..config import AgentConfig
@@ -82,6 +82,8 @@ class ExplorerAgent:
         self.plan_dropped: str | None = None       # why the plan was discarded outside _ensure_plan
         self.last_progress_turn = 1                # last turn a new cell was visited / gold taken
         self.minimax_streak = 0                    # consecutive Minimax decisions in the same cell
+        self.prediction: tuple | None = None       # (turn, predicted W cell, reply, hypothesis) from Minimax
+        self.last_minimax = None                   # MinimaxResult of the latest search
         self.minimax_cell: Pos | None = None
         self.turn_entries: dict[str, int] = {}     # tag -> entry id for this turn (for refs)
 
@@ -165,6 +167,7 @@ class ExplorerAgent:
 
         self._update_pits()
         self._update_wumpus(p)
+        self._check_prediction()
         self._update_hazards()
 
     def valid_breeze(self) -> dict[Pos, tuple[bool, int]]:
@@ -277,6 +280,22 @@ class ExplorerAgent:
                          f"most likely {top[0][0]} ({top[0][1]:.0%}), P(within 2)={self.threat:.0%}",
                          tr.report.explain(), cell=top[0][0])
         self.turn_entries["WUMPUS_BELIEF"] = e.id
+
+    def _check_prediction(self) -> None:
+        """Compare Minimax's predicted Wumpus reply with what the evidence now says."""
+        pred, self.prediction = self.prediction, None
+        if pred is None or not self.tracker.alive or self.turn != pred[0] + 1:
+            return
+        _, cell, reply, hyp = pred
+        p = self.tracker.prob(cell)
+        if p < 0.05:
+            self.log.add(self.turn, "REPLAN", f"Wumpus did not act as predicted ({reply} to {cell}) -> "
+                         "prediction discarded, replanning",
+                         [f"Minimax (turn {pred[0]}) assumed the Wumpus at {hyp} and predicted {reply} -> {cell}",
+                          f"after this turn's evidence P(Wumpus at {cell}) = {p:.1%}: the prediction is refuted",
+                          "the plan built on it is dropped; A* and Minimax run again on the new belief"],
+                         refs=[self.turn_entries["WUMPUS_BELIEF"]], cell=cell)
+            self.plan = None
 
     def _update_hazards(self) -> None:
         """Combined pit / Wumpus / death estimate for every non-visited cell (bayesian.estimate_hazard)."""
@@ -655,8 +674,8 @@ class ExplorerAgent:
         blocked |= {c for c in self.portal_status if self._unknown_portal(c)}
         game = DuelGame(size=self.info.size, portals=dict(self.portals), blocked=frozenset(blocked),
                         pit_risk={c: (0.0 if self._pit_known_safe(c) else p) for c, p in self.pit_prob.items()},
-                        goal_dist=self._goal_distance(goal), max_step_risk=cfg.max_explore_risk,
-                        jump_distance=self.info.jump_distance)
+                        goal_dist=self._goal_distance(goal), exit_dist=self._goal_distance(self.info.start),
+                        max_step_risk=cfg.max_explore_risk, jump_distance=self.info.jump_distance)
         root = DuelState(self.pos, self.facing, self.pos, True, self.arrows, self.jump_available)
         hyps = self.tracker.top(cfg.minimax_hypotheses)
         res = determinized_decision(game, root, hyps, cfg.minimax_depth)
@@ -664,6 +683,12 @@ class ExplorerAgent:
                          f"(E[V]={res.expected_value:.0f}, {res.stats.nodes} nodes, {res.stats.cutoffs} cutoffs)",
                          res.explain(), refs=[self.turn_entries["WUMPUS_BELIEF"]])
         a = res.best_action
+        self.last_minimax = res
+        hyp, reply = res.predicted_reply()
+        if reply is not None:
+            after = game.result(replace(root, wumpus=hyp), a)
+            cell = game._land(after.wumpus.step(reply.direction)) if reply.direction else after.wumpus
+            self.prediction = (self.turn, cell, reply, hyp)
         if self.plan and self.plan.actions and self.plan.actions[0] == a:
             self.plan.pop()
         else:

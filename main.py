@@ -15,7 +15,7 @@ from wumpus.terminal import configure_console, run
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(description="WUMPUS: THE MIND GAMES")
     ap.add_argument("--seed", type=int, default=7, help="dungeon seed (reproducible)")
-    ap.add_argument("--wumpus", default="human", choices=["human", "idle", "random", "hunter"],
+    ap.add_argument("--wumpus", default="human", choices=["human", "idle", "random", "hunter", "minimax"],
                     help="who controls the Wumpus")
     ap.add_argument("--max-turns", type=int, default=150)
     ap.add_argument("--no-board", action="store_true", help="do not print the board each turn")
