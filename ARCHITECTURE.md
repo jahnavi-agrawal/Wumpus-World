@@ -7,7 +7,7 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 
 ```
 .
-├── main.py                     # entry point: python main.py [--seed N] [--headless]
+├── main.py                     # entry point: python main.py [--seed N] [--wumpus human|idle|random|hunter]
 ├── requirements.txt            # pygame, pytest  (nothing else)
 ├── ARCHITECTURE.md             # this file
 ├── RULES.md                    # game rules + state-transition rules of every mechanic
@@ -32,6 +32,8 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 │   │   ├── pathfinding.py      # A* (moves + jumps + teleport pads)
 │   │   ├── minimax.py          # Minimax with alpha-beta pruning
 │   │   └── explorer.py         # ExplorerAgent: belief update, planning, replanning
+│   ├── terminal.py             # terminal version (rendering, commands, game loop)
+│   ├── runner.py               # headless game loop (simulation, tests)
 │   ├── control/
 │   │   └── wumpus_controllers.py  # HumanWumpusController (UI-fed), ScriptedWumpusController
 │   └── ui/                     # pygame only lives here
@@ -134,8 +136,10 @@ loop:
 | M4 | A* with jump/teleport | optimality vs Dijkstra, admissibility |
 | M5 | Minimax + alpha-beta | equals plain minimax value, prunes > 0 |
 | M6 | ExplorerAgent + BrainLog + replanning | separation test, seeded full-game integration tests |
-| M7 | Pygame UI, human Wumpus controls, clickable inspector | headless (SDL dummy) smoke test |
-| M8 | Polish, README, final DECISIONS | full suite |
+| M7 | Environment v2 (user spec): facing, 2 portal pairs, collapsing/shuffle tiles, 3-cell jump, 8 percepts, score, events; AI adapted | env tests + 90-game simulation sweep |
+| M8 | Terminal version: human Wumpus, `i <id>` inspector, knowledge/belief maps | scripted-keystroke tests |
+| M9 | Pygame UI, clickable inspector | headless (SDL dummy) smoke test |
+| M10 | Polish, final DECISIONS | full suite |
 
 ## 7. Technical risks
 

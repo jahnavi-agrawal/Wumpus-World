@@ -222,3 +222,16 @@ against a passive Wumpus but is right against an aggressive human. (b) The omnis
 test opponent always knows where the explorer is, while the explorer only smells it when adjacent.
 Under the spec's rules it wins most games. A human player is not omniscient in intent, and the
 agent beats random play about half the time.
+
+## D8 — Terminal version (M8)
+
+* **Human sees the god view, the AI's views are separate.** The board shows the true dungeon,
+  because the human Wumpus is omniscient. `k` and `m` render only the explorer's beliefs (pit
+  probabilities, KB-proven cells, belief over the Wumpus position) as of its last observation.
+* **Traceability:** each explorer turn prints the key entries with ids, and `i <id>` prints that
+  entry's stored details (the clauses DPLL used, the enumerated pit models, the HMM filter steps,
+  Minimax values per hypothesis) and the entries it depends on. Nothing is generated at display time.
+* **Testable by construction:** rendering and command parsing are pure functions, and the game loop
+  takes injectable `inp`/`out`. Tests drive whole games with scripted keystrokes.
+* **Windows console:** stdout is reconfigured to UTF-8 (`errors="replace"`) so logic symbols render;
+  the board itself is ASCII only.
