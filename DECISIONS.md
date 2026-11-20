@@ -326,3 +326,27 @@ agent beats random play about half the time.
 5. **Belief truncation:** hypotheses outside the top 4 are ignored; their mass is renormalised away.
 * **Performance:** KB connected components are now computed once per KB with union-find (cached),
   and clause texts are built only when an explanation is displayed. Three games went from 34 s to 4.3 s.
+
+## D12 — Integrated decision pipeline (Prompt 4)
+
+* **`decide()` = priorities → plan/Minimax → hazard guard → `DecisionReport`.** The report (one per
+  decision, `agent.reports`) holds the current observations, facts newly inferred this turn,
+  hazard estimates of frontier cells, all 7 candidate actions with an assessment, the A* route
+  (with alternatives and rejections) if one was planned, the Minimax output if it ran, the selected
+  action, and the explanation. It is JSON-serialisable.
+* **Priority order** (as specified): grab on glitter → climb with the gold → hunt if stuck → explore
+  (tier 1: KB-proven pit-free cells; tier 2: risk ≤ 5 %; tier 3: risk ≤ cap) → Minimax when the
+  Wumpus is near → return home with the gold → anti-loop rules (stuck counter, anti-paralysis,
+  retreat). A scenario showed the 5 % tier wrongly treated an *unproven* 4 %-prior cell like a
+  proven one, so tier 1 is now strictly "proven". Pit deaths against the idle Wumpus fell from 7 to 4 per 30 games.
+* **Hazard guard:** whatever produced the action, if a FORWARD/JUMP would land (after known portals)
+  on a proven pit, a collapsed tile or a cell where the KB says the Wumpus certainly is, it is
+  replaced by a turn and logged as WARNING.
+* **Escape-route preservation:** exploration targets must keep a known way back to the entrance:
+  walking over proven pit-free cells (with the unstable tile we stand on counted as collapsed), or
+  the unused jump landing in that network. A target reachable only by spending the jump, whose only
+  way back is the jump, is rejected. The `jump_opportunity` scenario found this bug: the agent
+  jumped *into* a dead end and was trapped with the gold.
+* **Fixed-dungeon integration tests** live in `evaluation/scenarios.py` (10 scenarios, shared with
+  the evaluation) and `tests/test_integration.py`.
+* Sweep after these changes (30 seeds): idle 21 W / 9 L, random 15 W / 2 D / 13 L, hunter 4 W / 26 L.

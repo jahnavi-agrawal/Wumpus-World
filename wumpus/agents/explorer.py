@@ -84,6 +84,9 @@ class ExplorerAgent:
         self.minimax_streak = 0                    # consecutive Minimax decisions in the same cell
         self.prediction: tuple | None = None       # (turn, predicted W cell, reply, hypothesis) from Minimax
         self.last_minimax = None                   # MinimaxResult of the latest search
+        self.reports: list[DecisionReport] = []    # one structured report per decision
+        self._turn_minimax = None
+        self._turn_route = None
         self.minimax_cell: Pos | None = None
         self.turn_entries: dict[str, int] = {}     # tag -> entry id for this turn (for refs)
 
@@ -396,6 +399,16 @@ class ExplorerAgent:
 
     # ================================================================ decision
     def decide(self) -> ExplorerAction:
+        """Decision pipeline (see DecisionReport): priorities -> plan/Minimax -> hazard guard -> report."""
+        self._turn_minimax = self._turn_route = None
+        n_before = len(self.log.entries)
+        action = self._decide()
+        action = self._guard(action)
+        self.last_action = action
+        self.reports.append(self._report(action, n_before))
+        return action
+
+    def _decide(self) -> ExplorerAction:
         self.last_pos, self.last_facing = self.pos, self.facing
         if self.glitter and not self.has_gold:
             return self._commit(GRAB, "glitter perceived -> grab the gold", [self.turn_entries["PERCEPT"]])
@@ -456,6 +469,11 @@ class ExplorerAgent:
         Above the normal risk cap only when cut off from the exit (otherwise a certain loss)."""
         cap = 0.5 if cut_off_from_exit else self.risk_cap()
         cells = [c for c in self._frontier() if self.cell_risk(c) <= cap]
+        if cells and cut_off_from_exit:     # equally risky options: prefer the ones towards the exit
+            low = min(self.cell_risk(c) for c in cells)
+            cells = [c for c in cells if self.cell_risk(c) <= low + 0.02]
+            near = min(manhattan(c, self.info.start) for c in cells)
+            cells = [c for c in cells if manhattan(c, self.info.start) == near]
         res = self._astar(set(cells), allow_unknown=True) if cells else None
         if res is None or not res.found:
             return None
@@ -473,6 +491,89 @@ class ExplorerAgent:
                                                   "depends on entries: " + ", ".join(f"#{r}" for r in refs)],
                      refs=refs)
         return a
+
+    # ---------------------------------------------------------------- guard and report
+    def _landing(self, a: ExplorerAction) -> Pos | None:
+        if a not in (FORWARD, JUMP):
+            return None
+        c = self.pos.step(self.facing, 1 if a is FORWARD else self.info.jump_distance)
+        if not (0 <= c.x < self.info.size and 0 <= c.y < self.info.size):
+            return None
+        return self.portals.get(c, c)
+
+    def _confirmed_fatal(self, c: Pos) -> str | None:
+        if c in self.collapsed:
+            return "collapsed tile"
+        st = self.statuses.get(c)
+        if st is not None and st.status == "pit":
+            return "proven pit"
+        ws = self.wumpus_status.get(c)
+        if ws is not None and ws.status == "wumpus":
+            return "the Wumpus is certainly there"
+        return None
+
+    def _guard(self, a: ExplorerAction) -> ExplorerAction:
+        """Last line of defence: never knowingly enter a confirmed fatal hazard."""
+        c = self._landing(a)
+        why = self._confirmed_fatal(c) if c is not None else None
+        if why is None:
+            return a
+        self.log.add(self.turn, "WARNING", f"guard: refused {a} into {c} ({why}) -> turn instead",
+                     [f"selected action {a} would land on {c}", f"{c} is a confirmed hazard: {why}",
+                      "rule: never knowingly enter a confirmed fatal hazard"], cell=c)
+        self.plan, self.plan_dropped = None, f"guard refused {a} into {c}"
+        return TURN_LEFT
+
+    def candidate_actions(self) -> list[tuple[str, str]]:
+        """Every legal explorer action with a one-line assessment (for the decision report)."""
+        out = []
+        for a in (FORWARD, JUMP):
+            raw = self.pos.step(self.facing, 1 if a is FORWARD else self.info.jump_distance)
+            if a is JUMP and not self.jump_available:
+                out.append((str(a), "unavailable: jump already used"))
+                continue
+            if not (0 <= raw.x < self.info.size and 0 <= raw.y < self.info.size):
+                out.append((str(a), "useless: wall ahead (bump)"))
+                continue
+            c = self.portals.get(raw, raw)
+            fatal = self._confirmed_fatal(c)
+            if fatal:
+                out.append((str(a), f"forbidden: {c} is a {fatal}"))
+                continue
+            h = self.hazards.get(c)
+            risk = h.p_death if h else self.cell_risk(c)
+            tag = "proven pit-free" if self._pit_known_safe(c) else "UNPROVEN"
+            out.append((str(a), f"-> {c} ({tag}), P(death) {risk:.0%}"))
+        out.append((str(TURN_LEFT), f"face {self.facing.left().label}"))
+        out.append((str(TURN_RIGHT), f"face {self.facing.right().label}"))
+        out.append((str(GRAB), "gold here (glitter)" if self.glitter and not self.has_gold else "nothing to grab"))
+        if self.arrows > 0 and self.tracker.alive:
+            p_hit = sum(self.tracker.prob(x) for x in ray(self.pos, self.facing, self.info.size))
+            out.append((str(SHOOT), f"P(hit) = {p_hit:.0%} along {self.facing.label}"))
+        else:
+            out.append((str(SHOOT), "no arrow" if self.arrows == 0 else "the Wumpus is dead"))
+        out.append((str(CLIMB), ("exit: " + ("escape with the gold" if self.has_gold else "retreat (draw)"))
+                    if self.pos == self.info.start else "not at the exit"))
+        return out
+
+    def _report(self, action: ExplorerAction, first_entry: int) -> "DecisionReport":
+        turn_entries = self.log.for_turn(self.turn)
+        new_facts = tuple(e.summary for e in turn_entries if e.tag == "INFERENCE")
+        decision = [e for e in self.log.entries[first_entry:] if e.tag == "DECISION"]
+        why = decision[-1].summary if decision else str(action)
+        frontier = self._frontier_cells(self.hazards)
+        hz = {str(c): self.hazards[c].to_dict() for c in frontier if c in self.hazards}
+        p = self.percepts.get(self.turn)
+        return DecisionReport(
+            turn=self.turn, observations={"position": tuple(self.pos), "facing": self.facing.label,
+                                          "percepts": p.flags() if p else "", "has_gold": self.has_gold,
+                                          "arrows": self.arrows, "jump": self.jump_available},
+            new_facts=new_facts, hazards=MappingProxyType(hz), candidates=tuple(self.candidate_actions()),
+            astar=self._turn_route.to_dict() if self._turn_route else (
+                {"plan": [str(a) for a in self.plan.actions], "cells": [tuple(c) for c in self.plan.cells],
+                 "note": "continuing the existing plan"} if self.plan else None),
+            minimax=self._turn_minimax.to_dict() if self._turn_minimax else None,
+            selected=str(action), explanation=why)
 
     # ---------------------------------------------------------------- progress / hunting
     def stuck(self) -> int:
@@ -566,11 +667,27 @@ class ExplorerAgent:
             self.turn_entries["TARGET"] = e.id
             return None, "", rows
         self.retreating = False
+        escape = self._exit_connected()
+        walk_escape = self._exit_connected(use_jump=False)
+        with_exit = [c for c in ok if c in escape]
+        if with_exit and len(with_exit) < len(ok):
+            details.append(f"escape route: {len(ok) - len(with_exit)} candidates would cut us off from the "
+                           f"exit -> only {len(with_exit)} with a known way back are kept")
+            ok = with_exit
+        proven = [c for c, _, _, r in rows if c in ok and r <= cfg.safe_risk and self._pit_known_safe(c)]
         safe = [c for c, _, _, r in rows if c in ok and r <= cfg.safe_risk]
-        goals = safe or ok
-        details.append(f"{len(safe)} cells are near-safe (risk ≤ {cfg.safe_risk:.0%}) -> "
-                       + ("explore only those" if safe else "no safe option, accept calculated risk"))
+        goals = proven or safe or ok
+        details.append(f"tier 1: {len(proven)} proven pit-free (and low Wumpus risk); tier 2: {len(safe)} with "
+                       f"risk ≤ {cfg.safe_risk:.0%}; tier 3: {len(ok)} within the cap -> using tier "
+                       + ("1 (proven safe)" if proven else "2 (low risk, unproven)" if safe
+                          else "3 (no safe option: calculated risk)"))
         res = self._astar(set(goals))
+        while res.found and JUMP in res.actions and res.goal not in walk_escape:
+            # the only way back from this target is the jump, and getting there would spend it
+            details.append(f"escape route: reaching {res.goal} uses the jump, and the jump is its only way "
+                           "back -> rejected")
+            goals = [c for c in goals if c != res.goal]
+            res = self._astar(set(goals)) if goals else PathResult(False, self.pos)
         if not res.found:
             e = L.add(self.turn, "TARGET", "acceptable cells unreachable -> retreat", details + res.explain())
             self.turn_entries["TARGET"] = e.id
@@ -581,6 +698,27 @@ class ExplorerAgent:
                   f"{len(goals)} candidates)", details, cell=res.goal)
         self.turn_entries["TARGET"] = e.id
         return res.goal, f"explore {res.goal}", ok
+
+    def _exit_connected(self, use_jump: bool = True) -> set[Pos]:
+        """Cells from which the entrance is reachable over proven pit-free cells, treating the tile
+        we stand on as collapsed if it is unstable (it will be a pit once we leave)."""
+        bad = set(self.collapsed) | ({self.unstable_here} if self.unstable_here else set())
+        ok = lambda c: c not in bad and self._pit_known_safe(c)
+        seen, q = {self.info.start}, deque([self.info.start])
+        while q:
+            c = q.popleft()
+            for n in neighbors(c, self.info.size):
+                if n not in seen and ok(n):
+                    seen.add(n)
+                    q.append(n)
+        # a frontier cell keeps an escape route if it touches that network, or if the unused jump
+        # (3 cells ahead in some direction, crossing anything) lands in it
+        out = seen | {c for c in all_cells(self.info.size) if c not in bad
+                      and any(n in seen for n in neighbors(c, self.info.size))}
+        if use_jump and self.jump_available:
+            out |= {c for c in all_cells(self.info.size) if c not in bad
+                    and any(c.step(d, self.info.jump_distance) in seen for d in DIRECTIONS)}
+        return out
 
     # ---------------------------------------------------------------- planning
     def risk_model(self) -> RiskModel:
@@ -640,6 +778,7 @@ class ExplorerAgent:
             if route.best.found:
                 reason = f"{reason}; safe cells do not reach {goal} -> route through unexplored cells"
         self.last_route = route
+        self._turn_route = route
         res = route.best
         if res.found:
             self.plan = Plan(goal, purpose, list(res.actions), list(res.cells), list(res.facings), res.cost,
@@ -684,6 +823,7 @@ class ExplorerAgent:
                          res.explain(), refs=[self.turn_entries["WUMPUS_BELIEF"]])
         a = res.best_action
         self.last_minimax = res
+        self._turn_minimax = res
         hyp, reply = res.predicted_reply()
         if reply is not None:
             after = game.result(replace(root, wumpus=hyp), a)
@@ -719,3 +859,17 @@ class KnowledgeSnapshot:
     pit_probability: MappingProxyType
     wumpus_alive: bool
     size: int
+
+
+@dataclass(frozen=True)
+class DecisionReport:
+    """Structured record of one decision (Brain View / tests)."""
+    turn: int
+    observations: dict
+    new_facts: tuple
+    hazards: MappingProxyType          # "(x,y)" -> HazardEstimate.to_dict() for frontier cells
+    candidates: tuple                  # (action, assessment)
+    astar: dict | None                 # RoutePlan.to_dict() if a route was (re)planned this turn
+    minimax: dict | None               # MinimaxResult.to_dict() if Minimax ran this turn
+    selected: str
+    explanation: str
