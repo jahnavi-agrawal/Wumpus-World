@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-from .ai.explorer import ExplorerAgent
+from .agents.explorer import ExplorerAgent
 from .config import AgentConfig, GameConfig
 from .environment.engine import GameEngine, Phase
 

@@ -1,7 +1,7 @@
 """Integration tests: the full agent, through the engine and with hand-fed percepts."""
 import pytest
 
-from wumpus.ai.explorer import ExplorerAgent
+from wumpus.agents.explorer import ExplorerAgent
 from wumpus.config import GameConfig
 from wumpus.control.wumpus_controllers import ScriptedWumpusController
 from wumpus.core.actions import FORWARD, JUMP, STAY, TURN_LEFT, TURN_RIGHT
@@ -44,8 +44,8 @@ def test_first_turn_reasoning_is_logged_with_evidence():
     agent = ExplorerAgent(eng.public_info())
     agent.act(eng.percept())
     tags = {e.tag for e in agent.log.entries}
-    assert {"PERCEPT", "KB_TELL", "KB_INFER", "WUMPUS_BELIEF", "TARGET", "ASTAR", "DECISION"} <= tags
-    assert "DPLL" in "\n".join(agent.log.tagged("KB_INFER")[0].details)
+    assert {"PERCEPT", "KB_TELL", "INFERENCE", "WUMPUS_BELIEF", "TARGET", "A*_PLANNER", "DECISION"} <= tags
+    assert "DPLL" in "\n".join(agent.log.tagged("INFERENCE")[0].details)
 
 
 def test_risk_calc_entry_contains_real_calculation():
@@ -79,12 +79,13 @@ def test_unstable_floor_becomes_known_pit_and_explains_breeze():
 def test_teleport_learns_portal_pair():
     a = ExplorerAgent(info())
     a.observe(percept(1, (0, 0)))
-    a.last_action, a.last_pos, a.last_facing = FORWARD, Pos(0, 0), D.E
-    a.observe(percept(2, (5, 5), teleported=True))
-    assert a.portals == {Pos(1, 0): Pos(5, 5), Pos(5, 5): Pos(1, 0)}
+    a.last_action = FORWARD
+    a.observe(percept(2, (1, 0)))
+    a.last_action, a.last_pos, a.last_facing = FORWARD, Pos(1, 0), D.E
+    a.observe(percept(3, (5, 5), teleported=True))           # stepped onto (2,0)
+    assert a.portals == {Pos(2, 0): Pos(5, 5), Pos(5, 5): Pos(2, 0)}
     assert a.tracker.portals == a.portals
-    st = a.dkb.classify_portals([Pos(1, 0)])
-    assert st[Pos(1, 0)].status == "portal"
+    assert a.dkb.classify_portals([Pos(2, 0)])[Pos(2, 0)].status == "portal"
 
 
 def test_portal_signal_inference():
@@ -135,7 +136,7 @@ def test_fix1_cut_off_from_exit_routes_through_unexplored_cells():
     a.last_action = FORWARD
     a.observe(percept(3, (0, 2), facing=D.N, has_gold=True))  # (0,1) collapsed behind us
     act = a.decide()
-    path = [e for e in a.log.tagged("ASTAR") if e.turn == 3][-1]
+    path = [e for e in a.log.tagged("A*_PLANNER") if e.turn == 3][-1]
     assert "unexplored" in " ".join(e.summary for e in a.log.tagged("REPLAN")) or act is not TURN_LEFT
     assert a.plan is not None and a.plan.goal == Pos(0, 0) and Pos(0, 1) not in a.plan.cells
     assert "(0,0)" in path.summary
@@ -152,7 +153,7 @@ def test_fix2_minimax_does_not_dither_between_turns():
 
 
 def test_fix3_tie_break_prefers_not_dying_immediately():
-    from wumpus.ai.minimax import DuelGame, DuelState, determinized_decision
+    from wumpus.agents.minimax import DuelGame, DuelState, determinized_decision
     from wumpus.core.geometry import all_cells, manhattan
     g = DuelGame(size=8, portals={}, blocked=frozenset(), pit_risk={},
                  goal_dist={c: manhattan(c, Pos(0, 0)) for c in all_cells(8)})

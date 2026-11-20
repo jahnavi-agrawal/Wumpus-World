@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from wumpus.ai.minimax import (DuelGame, DuelState, SearchStats, alphabeta, determinized_decision,
+from wumpus.agents.minimax import (DuelGame, DuelState, SearchStats, alphabeta, determinized_decision,
                                minimax)
 from wumpus.core.actions import FORWARD, JUMP, SHOOT, TURN_LEFT
 from wumpus.core.geometry import Direction as D, Pos, all_cells, manhattan

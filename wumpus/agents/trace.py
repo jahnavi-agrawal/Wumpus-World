@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 
 from ..core.geometry import Pos
 
-TAGS = ("PERCEPT", "EVENT", "KB_TELL", "KB_INFER", "RISK_CALC", "WUMPUS_BELIEF", "TARGET",
-        "ASTAR", "REPLAN", "MINIMAX", "DECISION", "WARNING")
+TAGS = ("PERCEPT", "EVENT", "KB_TELL", "INFERENCE", "RISK_CALC", "WUMPUS_BELIEF", "TARGET",
+        "A*_PLANNER", "REPLAN", "MINIMAX", "DECISION", "WARNING")
 
 
 @dataclass

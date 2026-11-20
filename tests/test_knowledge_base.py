@@ -1,7 +1,7 @@
 import itertools
 import random
 
-from wumpus.ai.logic import DungeonKB, KnowledgeBase, P, dpll
+from wumpus.agents.knowledge_base import DungeonKB, KnowledgeBase, P, dpll
 from wumpus.config import GameConfig
 from wumpus.core.geometry import Pos
 from wumpus.environment.engine import GameEngine
@@ -73,4 +73,6 @@ def test_collapsed_cell_known_not_pit():
 
 
 def test_symbol_names():
-    assert P(Pos(3, 2)) == "P32"
+    from wumpus.agents.knowledge_base import BREEZE, SAFE, STENCH, WUMPUS
+    assert (P(Pos(2, 3)), WUMPUS(Pos(3, 4)), SAFE(Pos(2, 2)), BREEZE(Pos(2, 2)), STENCH(Pos(3, 3))) == \
+        ("PIT_2_3", "WUMPUS_3_4", "SAFE_2_2", "BREEZE_2_2", "STENCH_3_3")

@@ -1,6 +1,6 @@
 import pytest
 
-from wumpus.ai.wumpus_tracker import WumpusTracker
+from wumpus.agents.wumpus_tracker import WumpusTracker
 from wumpus.config import GameConfig
 from wumpus.core.geometry import Pos, manhattan, neighbors
 from wumpus.environment.engine import GameEngine

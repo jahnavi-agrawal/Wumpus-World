@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 
-from .ai.explorer import ExplorerAgent
+from .agents.explorer import ExplorerAgent
 from .config import GameConfig
 from .control.wumpus_controllers import ScriptedWumpusController
 from .core.actions import STAY, WumpusAction

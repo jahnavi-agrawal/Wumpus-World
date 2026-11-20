@@ -235,3 +235,29 @@ agent beats random play about half the time.
   takes injectable `inp`/`out`. Tests drive whole games with scripted keystrokes.
 * **Windows console:** stdout is reconfigured to UTF-8 (`errors="replace"`) so logic symbols render;
   the board itself is ASCII only.
+
+## D9 — Knowledge base completed per the KB specification (Prompt 1)
+
+* **Layout:** `wumpus/agents/knowledge_base.py` (was `ai/logic.py`), `wumpus/agents/explorer.py`.
+  Renamed with `git mv`; the code was extended, not rewritten. Log tags follow the GUI spec:
+  `INFERENCE` (was KB_INFER), `A*_PLANNER` (was ASTAR).
+* **Propositions:** `PIT_x_y, BREEZE_x_y, WUMPUS_x_y, STENCH_x_y, SAFE_x_y, PORTAL_x_y, SIGNAL_x_y`.
+* **The Wumpus is now in the KB, as time-sensitive facts.** Because it moves every turn, only the
+  current turn's evidence is valid: `¬WUMPUS(own cell)` and `STENCH_c ⇔ ∨ WUMPUS(neighbours)`,
+  tagged `valid_turn = t`. Rebuilding the KB each turn expires them (logged as "N expired").
+  That is the belief revision for a moving Wumpus: old location assumptions never stay valid.
+  A scream makes `¬WUMPUS` permanent everywhere. Public rule `¬PIT_c ∨ ¬WUMPUS_c`.
+* **SAFE_c ⇔ ¬PIT_c ∧ ¬WUMPUS_c**, queried for frontier cells. Far from the explorer the Wumpus can
+  never be ruled out logically, so "known safe" is deliberately small. The Bayesian filter supplies
+  the quantitative Wumpus risk.
+* **Why the HMM filter is kept next to the logic:** logic can only say "possible / impossible right
+  now". Across turns, motion makes everything possible again, and only a probabilistic model can
+  carry information forward. The KB gives the certain facts, the filter gives the degrees.
+* **No at-most-one-Wumpus axiom** (2016 pairwise clauses): it is never needed to entail a single
+  WUMPUS literal from stench evidence, and it would slow every query. (Simplification.)
+* **Contradictions:** `KnowledgeBase.consistency()` returns a *minimal* unsatisfiable subset
+  (deletion-based). The agent logs it and revises: it drops the oldest observation in the core and
+  re-checks. Under correct rules this never fires; the test injects an impossible history.
+* **Explanations:** every inference stores the DPLL proof, the clauses used, and an "X because: …"
+  sentence built from the clause sources. `ExplorerAgent.knowledge()` returns a frozen
+  `KnowledgeSnapshot` (frozensets and mappingproxy objects) with all the lists the spec names.

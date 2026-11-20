@@ -56,7 +56,7 @@ def test_board_shows_hidden_layout_for_the_human():
 
 
 def test_knowledge_and_belief_views_use_agent_beliefs_only():
-    from wumpus.ai.explorer import ExplorerAgent
+    from wumpus.agents.explorer import ExplorerAgent
     e = make_engine(pits=[(2, 0)], wumpus=(6, 6))
     a = ExplorerAgent(e.public_info())
     e.apply_explorer_action(a.act(e.percept()))
@@ -100,7 +100,7 @@ def test_human_turns_with_inspection_and_illegal_moves():
 def test_illegal_wumpus_move_is_rejected_and_reprompted():
     e = make_engine(wumpus=(7, 0))
     # drive the human prompt directly through the loop helper
-    from wumpus.ai.explorer import ExplorerAgent
+    from wumpus.agents.explorer import ExplorerAgent
     from wumpus.terminal import _ask_human
     a = ExplorerAgent(e.public_info())
     e.apply_explorer_action(a.act(e.percept()))

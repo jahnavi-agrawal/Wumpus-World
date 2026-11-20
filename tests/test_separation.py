@@ -4,10 +4,10 @@ import pathlib
 
 from wumpus.config import GameConfig
 from wumpus.control.wumpus_controllers import ScriptedWumpusController
-from wumpus.ai.explorer import ExplorerAgent
+from wumpus.agents.explorer import ExplorerAgent
 from wumpus.runner import play_game
 
-AI_DIR = pathlib.Path(__file__).resolve().parents[1] / "wumpus" / "ai"
+AI_DIR = pathlib.Path(__file__).resolve().parents[1] / "wumpus" / "agents"
 FORBIDDEN = ("env", "environment", "ui", "control", "runner", "pygame")
 
 

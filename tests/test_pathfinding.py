@@ -2,7 +2,7 @@ import random
 
 import pytest
 
-from wumpus.ai.pathfinding import astar, portal_aware_distance, portal_exit_distances
+from wumpus.agents.pathfinding import astar, portal_aware_distance, portal_exit_distances
 from wumpus.core.actions import FORWARD, JUMP, TURN_LEFT, TURN_RIGHT
 from wumpus.core.geometry import Direction as D, Pos, all_cells
 
