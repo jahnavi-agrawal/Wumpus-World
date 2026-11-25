@@ -8,7 +8,7 @@ A running log of major implementation decisions. Each milestone appends to it.
   (no numpy, no SAT/AI libraries), so every algorithm is visibly and genuinely implemented.
 * **Hidden vs. known state:** `wumpus/env` holds the ground truth; `wumpus/ai` may only import
   `wumpus/core`. The agent receives a frozen `PublicInfo` once and a frozen `Percept` per
-  turn. A test (`test_separation.py`) enforces this at the import level.
+  turn. A test (`tests/test_smoke.py`) enforces this at the import level.
 * **Determinism:** the world uses `random.Random(config.seed)`; the agent has no randomness
   and breaks ties by sorted coordinates; scripted Wumpus controllers take their own seed.
   The same seed + same human inputs therefore reproduce a game exactly.
@@ -348,7 +348,7 @@ agent beats random play about half the time.
   way back is the jump, is rejected. The `jump_opportunity` scenario found this bug: the agent
   jumped *into* a dead end and was trapped with the gold.
 * **Fixed-dungeon integration tests** live in `evaluation/scenarios.py` (10 scenarios, shared with
-  the evaluation) and `tests/test_integration.py`.
+  the evaluation); run them with `python -m evaluation.scenarios`.
 * Sweep after these changes (30 seeds): idle 21 W / 9 L, random 15 W / 2 D / 13 L, hunter 4 W / 26 L.
 
 ## D13 — Pygame interface (Prompt 5)

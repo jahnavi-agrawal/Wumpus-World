@@ -1,7 +1,7 @@
 # Game rules and state-transition rules
 
 Implemented in `wumpus/environment/` (`world.py`, `mechanics.py`, `percepts.py`, `events.py`,
-`engine.py`); every rule has a test in `tests/test_mechanics.py` / `tests/test_engine.py`.
+`engine.py`).
 **(public)** = known to the explorer AI via `PublicInfo` / `Percept`. Everything else is hidden.
 
 ## Setup (seeded, reproducible)

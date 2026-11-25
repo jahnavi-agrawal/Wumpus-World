@@ -46,13 +46,12 @@ wumpus/
                            brain_panel, app
   terminal.py, runner.py   terminal version, headless game loop
 evaluation/                scenarios.py (10 fixed dungeons), benchmark.py, results/
-tests/                     304 pytest tests (unit, integration, separation, UI)
+tests/                     14 smoke tests (one per component)
 ```
 
 **Separation of hidden and known state.** The explorer receives a frozen `PublicInfo` once and a
-frozen `Percept` per turn, and nothing else. `tests/test_separation.py` fails if anything in
-`wumpus/agents/` imports `environment`, `ui`, `control` or `pygame`, and it replays a recorded percept
-stream into a fresh agent to show its actions depend on percepts only. In the GUI, the Agent's Mind
+frozen `Percept` per turn, and nothing else. A test in `tests/test_smoke.py` fails if anything in
+`wumpus/agents/` imports `environment`, `ui`, `control` or `pygame`. In the GUI, the Agent's Mind
 board is drawn from `agent.knowledge()` only, never from the world.
 
 ## Game mechanics (summary; full rules in RULES.md)
@@ -151,20 +150,18 @@ decision box.
 
 ## Testing methodology
 
-* **304 pytest tests** (`python -m pytest`): one per rule in RULES.md; DPLL against truth tables;
-  pit probabilities against the AIMA textbook numbers and full-joint brute force; A* against
-  Dijkstra (optimal cost, admissible heuristic); alpha-beta against plain minimax; replanning
-  triggers; contradiction cores; read-only knowledge snapshot; terminal driven by scripted keystrokes;
-  GUI driven by injected key and mouse events with SDL's dummy video driver (including a check that
-  frames keep flowing while the AI thinks).
-* **10 deterministic scenarios** (`python -m evaluation.scenarios`, also run by
-  `tests/test_integration.py`): safe exploration, logical pit deduction, ambiguous hazards, moving
+* **14 smoke tests** (`python -m pytest`, about 5 s), one per component: hidden-information
+  separation (static import check), seeded world generation, turn order and illegal moves, action
+  events, DPLL pit deduction, pit probabilities against the AIMA textbook numbers, A* against
+  Dijkstra, alpha-beta on the AIMA textbook tree, a full AI game, one fixed scenario, the terminal
+  version, and the GUI (SDL dummy video driver).
+* **10 deterministic scenarios** (`python -m evaluation.scenarios`): safe exploration,
+  logical pit deduction, ambiguous hazards, moving
   Wumpus, teleporter discovery, collapsing route, shuffle event, jump opportunity, adversarial trap,
   gold retrieval and escape. Each checks concrete events and Brain entries. All 10 pass.
-* **Separation tests** (static imports + percept replay) for hidden-information leaks.
 * **Benchmark** on 100 held-out maps (below). While developing the agent I only watched seeds 0-29.
 * **Clean-environment check:** fresh clone + fresh venv + `pip install -r requirements.txt` →
-  300/300 tests pass, terminal game runs, GUI launches (headless).
+  all tests pass, terminal game runs, GUI launches (headless).
 
 ## Benchmark results (actual, `python -m evaluation.benchmark`)
 

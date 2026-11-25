@@ -54,7 +54,7 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 | `control.*` | Who decides the Wumpus action: human (queue filled by UI) or scripted (tests/demo). | core |
 | `ui.*` | Rendering and input. No game logic. | everything |
 
-**Separation guarantee:** `tests/test_separation.py` parses every file in `wumpus/agents/` with `ast`
+**Separation guarantee:** a test in `tests/test_smoke.py` parses every file in `wumpus/agents/` with `ast`
 and fails if it imports `wumpus.environment` (or `wumpus.ui`). The engine only hands the agent
 `PublicInfo` (once) and `Percept` objects (every turn).
 
