@@ -61,7 +61,7 @@ def test_risk_calc_entry_contains_real_calculation():
     assert calc[Pos(2, 0)].summary.startswith("Cell (2,0):")
 
 
-# --------------------------------------------------------------- v2 mechanics knowledge
+# --------------------------------------------------------------- mechanics knowledge
 def test_unstable_floor_becomes_known_pit_and_explains_breeze():
     a = ExplorerAgent(info())
     a.observe(percept(1, (0, 0)))

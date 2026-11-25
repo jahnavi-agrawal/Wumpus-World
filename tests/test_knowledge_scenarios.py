@@ -1,4 +1,4 @@
-"""Prompt 1: knowledge representation and inference, on manually constructed scenarios."""
+"""Knowledge representation and inference, on manually constructed scenarios."""
 import pytest
 
 from wumpus.agents.explorer import ExplorerAgent

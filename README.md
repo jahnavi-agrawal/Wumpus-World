@@ -45,7 +45,7 @@ wumpus/
   ui/                      Pygame interface: theme, icons, session (threaded AI), anim, board_view,
                            brain_panel, app
   terminal.py, runner.py   terminal version, headless game loop
-evaluation/                scenarios.py (10 fixed dungeons), benchmark.py, screenshots.py, results/
+evaluation/                scenarios.py (10 fixed dungeons), benchmark.py, results/
 tests/                     304 pytest tests (unit, integration, separation, UI)
 ```
 
@@ -214,7 +214,7 @@ What the numbers say:
 ## Incomplete features / honest notes
 
 * The GUI was verified with automated key/mouse event injection and headless screenshots
-  (`python -m evaluation.screenshots`, see `docs/screenshots/`). Its controls and rendering were not
+  (see `docs/screenshots/`). Its controls and rendering were not
   play-tested by a human in an interactive window during development. Please report anything that
   feels wrong in real use.
 * Animations are functional (movement tweens, jump arcs, rings and flashes for teleport, collapse,

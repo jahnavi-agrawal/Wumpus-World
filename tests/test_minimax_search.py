@@ -1,4 +1,4 @@
-"""Prompt 3: Minimax evaluation terms, structured output, opponent replies, AI Wumpus, prediction checks."""
+"""Minimax evaluation terms, structured output, opponent replies, AI Wumpus, prediction checks."""
 import json
 
 from wumpus.agents.minimax import DuelGame, DuelState, WumpusStep, alphabeta, determinized_decision

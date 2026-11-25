@@ -31,7 +31,7 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 │   ├── ui/                     # Pygame: theme, icons, session (threaded AI), anim, board_view, brain_panel, app
 │   ├── terminal.py             # terminal version
 │   └── runner.py               # headless game loop
-├── evaluation/                 # scenarios.py (10 fixed dungeons), benchmark.py, screenshots.py, results/
+├── evaluation/                 # scenarios.py (10 fixed dungeons), benchmark.py, results/
 ├── docs/screenshots/           # captured from the real interface
 └── tests/                      # unit, integration, separation and UI tests
 ```

@@ -1,4 +1,4 @@
-"""One or more tests per state-transition rule of RULES.md (v2)."""
+"""One or more tests per state-transition rule of RULES.md."""
 import pytest
 
 from wumpus.config import GameConfig

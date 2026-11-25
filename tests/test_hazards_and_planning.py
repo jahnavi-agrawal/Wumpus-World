@@ -1,4 +1,4 @@
-"""Prompt 2: Bayesian hazard estimation and A* planning (modes, alternatives, structured output)."""
+"""Bayesian hazard estimation and A* planning (modes, alternatives, structured output)."""
 import json
 from types import MappingProxyType
 

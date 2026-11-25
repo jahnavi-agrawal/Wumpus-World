@@ -1,4 +1,4 @@
-"""A* search for the explorer (v2 rules: facing, turns, 3-cell jump, portal pairs).
+"""A* search for the explorer (rules: facing, turns, 3-cell jump, portal pairs).
 
 State: (cell, facing, jump_available). Edges (every action costs >= 1, like the score):
   TURN_LEFT / TURN_RIGHT : cost 1

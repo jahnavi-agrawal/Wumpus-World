@@ -1,4 +1,4 @@
-"""State-transition rules (RULES.md v2). Functions mutate the WorldState and return the
+"""State-transition rules (RULES.md). Functions mutate the WorldState and return the
 structured events they caused plus the percept flags the explorer will feel."""
 from __future__ import annotations
 

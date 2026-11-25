@@ -1,4 +1,4 @@
-# Game rules and state-transition rules (v2)
+# Game rules and state-transition rules
 
 Implemented in `wumpus/environment/` (`world.py`, `mechanics.py`, `percepts.py`, `events.py`,
 `engine.py`); every rule has a test in `tests/test_mechanics.py` / `tests/test_engine.py`.
