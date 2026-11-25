@@ -211,9 +211,8 @@ What the numbers say:
 ## Incomplete features / honest notes
 
 * The GUI was verified with automated key/mouse event injection and headless screenshots
-  (see `docs/screenshots/`). Its controls and rendering were not
-  play-tested by a human in an interactive window during development. Please report anything that
-  feels wrong in real use.
+  (see `docs/screenshots/`), and play-tested by hand in an interactive window. Please report
+  anything that feels wrong in real use.
 * Animations are functional (movement tweens, jump arcs, rings and flashes for teleport, collapse,
   shuffle, gold, hits, new inferences and route changes) rather than elaborate. There is no sound.
 * Human-versus-AI play is supported in both the GUI and the terminal, but no human games were
