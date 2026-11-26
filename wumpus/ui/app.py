@@ -36,10 +36,20 @@ class App:
         if headless:
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
             os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
+        if not headless and os.name == "nt":
+            # Without this, Windows display scaling (e.g. 150%) enlarges the 1280x800 window past the screen.
+            try:
+                import ctypes
+                ctypes.windll.user32.SetProcessDPIAware()
+            except (AttributeError, OSError):
+                pass
         pygame.init()
         T.reset_fonts()
         pygame.display.set_caption("WUMPUS: THE MIND GAMES")
-        self.screen = pygame.display.set_mode((T.WIDTH, T.HEIGHT))
+        # SCALED keeps the 1280x800 layout and scales it to the window (mouse coordinates are mapped back),
+        # so a maximised or resized window always shows the whole interface.
+        flags = 0 if headless else pygame.SCALED | pygame.RESIZABLE
+        self.screen = pygame.display.set_mode((T.WIDTH, T.HEIGHT), flags)
         self.clock = pygame.time.Clock()
         self.session = GameSession(seed, wumpus_mode, record_to=None if headless else HUMAN_LOG)
         self.anim = Animator()
