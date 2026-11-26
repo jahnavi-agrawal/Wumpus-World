@@ -1,0 +1,89 @@
+WUMPUS: THE MIND GAMES - DEMO SCENARIOS
+=======================================
+
+Run from the project folder. Activate the virtual environment first:
+    .venv\Scripts\activate
+
+Suggested order for the meeting: 1 -> 2 -> 4 -> 6 (about 6-8 minutes).
+Keep 3 and 5 for if there is time.
+
+
+1. YOU PLAY THE WUMPUS (main demo)
+   Command:  python main.py              (map 7)
+   Shows:    every technique, live
+   - Move with W A S D, then press P to pause.
+   - Click a [RISK_CALC] line: the pit probability worked out from the possible
+     pit layouts (Bayes).
+   - Click an [INFERENCE] line: the logic proof and every sentence it used.
+   - Agent's Mind board: green = proven safe, red % = pit risk,
+     amber outline = where it thinks you are.
+   - Stand next to the explorer: [MINIMAX] entries appear as it reacts to you.
+
+
+2. MINIMAX KILLS THE WUMPUS
+   Command:  python main.py --seed 1086 --wumpus hunter
+   Shows:    adversarial search (Minimax + alpha-beta)
+   - Press - to slow it down.
+   - Turn 3: Minimax sees a certain threat, decides SHOOT, the scream follows,
+     and the explorer wins.
+   - Point to make: the same agent without Minimax is eaten on this map.
+
+
+3. LOGIC AND PROBABILITY ALONE
+   Command:  python main.py --seed 1057 --wumpus idle
+   Shows:    logic (DPLL) + Bayes + A*
+   - The Wumpus never moves, so this is pure hazard reasoning.
+   - A clean 17-action win.
+   - The explorer steps back onto visited cells after feeling a breeze: it
+     retreats to ground it knows is safe.
+
+
+4. THE BUG FIX IN ACTION
+   Command:  python main.py --seed 1007 --wumpus idle
+   Shows:    the walk-in check (DECISIONS D17)
+   - Press F to show all log tags.
+   - Look for "WARNING walk-in check" lines (around turns 25-50): Minimax chose
+     FORWARD, and the check overrode it because stepping in was riskier than
+     staying.
+   - The explorer survives but climbs out without the gold (a draw). The point
+     is that it is not eaten.
+
+
+5. THE HARDEST OPPONENT
+   Command:  python main.py --wumpus minimax
+   Shows:    the limitation
+   - An all-seeing AI Wumpus. Expect the explorer to lose most games.
+   - The Wumpus waits diagonally, where it causes no stench, then strikes.
+
+
+6. THE FIXED TEST CASES
+   Command:  python -m evaluation.scenarios
+   Shows:    testing with sample cases
+   - Ten hand-built dungeons, each checking one behaviour: pit deduction,
+     ambiguous hazards, moving Wumpus, teleporter, collapsing tile, shuffle,
+     jump, trap, escape.
+   - All 10 print PASS.
+
+
+7. OPTIONAL: REPLANNING
+   In scenario 1, step onto a portal or a cracked tile. The log shows [REPLAN]
+   with the reason (a teleport, or a tile collapsing on the route).
+
+
+KEYS
+   P        pause / resume
+   SPACE    one step
+   + / -    speed
+   F        all log tags
+   R        restart the same map
+   N        new map
+   H        help
+   ESC      menu
+   Click a log line to inspect its evidence.
+
+SCORE
+   -1 per action, -10 for the arrow, +1000 for escaping with the gold,
+   -1000 for dying. The score is negative until the explorer escapes with the gold.
+
+BACKUP
+   If the window misbehaves on the projector:  python main.py --terminal
