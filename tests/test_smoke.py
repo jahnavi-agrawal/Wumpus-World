@@ -187,3 +187,25 @@ def test_gui_runs_and_waits_for_the_human_wumpus():
         assert app.session.phase is Phase.EXPLORER and app.session.reality.status.turn == turn + 1
     finally:
         pygame.quit()
+
+
+# ------------------------------------------------------------- evaluation
+def test_oracle_finds_the_shortest_win():
+    from evaluation.oracle import shortest_win
+    assert shortest_win(GameConfig(seed=1003)) == 13      # equals exhaustive breadth-first search
+
+
+def test_human_game_is_recorded_and_summarised(tmp_path):
+    from evaluation.human_games import load, summary
+    from wumpus.ui.session import GameSession
+    log = tmp_path / "human_games.jsonl"
+    s = GameSession(seed=1, wumpus_mode="human", max_turns=40, record_to=log)
+    while s.phase is not Phase.OVER:
+        if s.phase is Phase.EXPLORER:
+            s.request_explorer_step()
+            s.wait()
+        else:
+            s.submit_wumpus(STAY)
+    games = load(log)
+    assert len(games) == 1 and games[0]["seed"] == 1 and games[0]["metrics"]["cal_cells"] > 0
+    assert "Human Wumpus games: 1" in summary(games)

@@ -412,3 +412,32 @@ agent beats random play about half the time.
   4. The Mind board draws the explorer at its own *predicted* position after its decided action
      (pure self-knowledge, not hidden data). Before, it was drawn one step behind the Reality board,
      which looked like it was walking backwards.
+
+## D16 — Evaluation with uncertainty, an oracle and belief metrics
+
+* **Why:** with 100 maps per cell, a win rate carries about ±9 points of uncertainty, and a paired
+  re-check showed that two of the README's three ablation claims (Bayes +8 points, Minimax vs a
+  random Wumpus) were not statistically significant. 48 of the 100 maps were never won by any agent,
+  and it was unknown whether they could be won at all.
+* **Changes:**
+  1. 500 held-out maps per cell (seeds 1000-1499) and an **idle Wumpus** opponent, which isolates
+     hazard reasoning from the duel.
+  2. **95% Wilson intervals** on every win rate and an **exact McNemar test** for each ablation step,
+     paired on the same maps. The average score (bimodal: about -1000 or +950) was replaced by
+     outcome shares and the median score.
+  3. **Winnability oracle** (`evaluation/oracle.py`): A* over the real mechanics with full knowledge
+     and an idle Wumpus. Its heuristic is a relaxed distance with portals, minus 2 for an unused jump;
+     it gives the same answers as exhaustive breadth-first search on 20 maps, about 130x faster.
+  4. **Belief metrics** (`wumpus/metrics.py`), measured from outside the agent against the hidden
+     world: pit-probability calibration on frontier cells, the Wumpus tracker's mass on the true cell,
+     and *danger turns* (real Wumpus adjacent) to evaluate Minimax where it actually runs.
+  5. A **Minimax settings sweep** (depth 2/4/6, 1/4/8 hypotheses) on 200 maps.
+  6. **Human games are recorded** (`wumpus/human_log.py`, GUI and terminal) only when a human
+     controlled the Wumpus for the whole game, and summarised by `evaluation/human_games.py`.
+* **Results** (README, `evaluation/results/benchmark.md`): all 500 maps are winnable; Bayes
+  (25% → 54% vs idle) and Minimax (5% → 18% vs hunter, 31% → 38% vs random) are significant gains;
+  nothing beats the Minimax Wumpus (4-5%); pit probabilities are well calibrated (Brier 0.089 vs
+  0.199); the tracker is weak (3-9% on the true cell); Minimax depth and hypothesis count barely
+  matter, so the default is kept.
+* **Run note:** the computer slept during the benchmark. The 3 games in progress logged a 12-hour
+  decision; they were re-run (identical outcomes) and only their planning times replaced.

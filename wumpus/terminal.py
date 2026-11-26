@@ -14,6 +14,7 @@ from .control.wumpus_controllers import make_controller
 from .core.actions import STAY, WumpusAction
 from .core.geometry import Direction, Pos
 from .environment.engine import GameEngine, Phase
+from .human_log import HumanGameLog
 
 FACING_GLYPH = {Direction.N: "^", Direction.E: ">", Direction.S: "v", Direction.W: "<"}
 SUMMARY_TAGS = ("EVENT", "TARGET", "REPLAN", "MINIMAX", "WARNING", "DECISION")
@@ -177,10 +178,13 @@ def parse_command(text: str) -> Command:
 
 
 # ------------------------------------------------------------------ game loop
-def run(config: GameConfig, wumpus: str = "human", inp=input, out=print, show_board: bool = True):
-    """Play one game. `wumpus` is 'human' or a scripted mode ('idle', 'random', 'hunter')."""
+def run(config: GameConfig, wumpus: str = "human", inp=input, out=print, show_board: bool = True,
+        record_to=None):
+    """Play one game. `wumpus` is 'human' or a scripted mode ('idle', 'random', 'hunter').
+    With `record_to`, a finished human game is appended there (see wumpus/human_log.py)."""
     engine = GameEngine(config)
     agent = ExplorerAgent(engine.public_info())
+    log = HumanGameLog(agent, "terminal", record_to) if record_to is not None and wumpus == "human" else None
     bot = None if wumpus == "human" else make_controller(wumpus, config.seed)
     out(f"WUMPUS: THE MIND GAMES - terminal edition (seed {config.seed}, Wumpus: {wumpus})")
     out(LEGEND)
@@ -190,6 +194,8 @@ def run(config: GameConfig, wumpus: str = "human", inp=input, out=print, show_bo
         if engine.phase is Phase.EXPLORER:
             turn = engine.turn
             action = agent.act(engine.percept())
+            if log:
+                log.before_action(engine.world, action)
             events = engine.apply_explorer_action(action)
             out("")
             out(f"=== Turn {turn}: explorer -> {action}")
@@ -213,6 +219,8 @@ def run(config: GameConfig, wumpus: str = "human", inp=input, out=print, show_bo
     out("")
     out(render_board(engine.world))
     out(f"GAME OVER: {engine.result.outcome.value} ({engine.result.reason}).  Final score {engine.score}")
+    if log:
+        log.finish(engine)
     return engine, agent
 
 

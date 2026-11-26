@@ -23,9 +23,11 @@ def main(argv=None) -> None:
     ap.add_argument("--no-board", action="store_true", help="terminal: do not print the board each turn")
     args = ap.parse_args(argv)
     if args.terminal:
+        from wumpus.human_log import HUMAN_LOG
         from wumpus.terminal import configure_console, run
         configure_console()
-        run(GameConfig(seed=args.seed, max_turns=args.max_turns), args.wumpus, show_board=not args.no_board)
+        run(GameConfig(seed=args.seed, max_turns=args.max_turns), args.wumpus, show_board=not args.no_board,
+            record_to=HUMAN_LOG)
     else:
         from wumpus.ui.app import run_gui
         run_gui(args.seed, args.wumpus)

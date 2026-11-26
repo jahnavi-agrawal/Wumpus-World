@@ -30,10 +30,12 @@ AI plays the **Explorer** (partial observability, sees only its own percepts).
 │   ├── control/                # Wumpus controllers: human, scripted, Minimax AI
 │   ├── ui/                     # Pygame: theme, icons, session (threaded AI), anim, board_view, brain_panel, app
 │   ├── terminal.py             # terminal version
-│   └── runner.py               # headless game loop
-├── evaluation/                 # scenarios.py (10 fixed dungeons), benchmark.py, results/
+│   ├── runner.py               # headless game loop
+│   ├── metrics.py              # evaluation metrics: agent beliefs vs the hidden world
+│   └── human_log.py            # records human-Wumpus games
+├── evaluation/                 # scenarios.py (10 fixed dungeons), benchmark.py, oracle.py, human_games.py, results/
 ├── docs/screenshots/           # captured from the real interface
-└── tests/                      # unit, integration, separation and UI tests
+└── tests/                      # smoke tests (one per component)
 ```
 
 ## 2. Module responsibilities

@@ -45,8 +45,10 @@ wumpus/
   ui/                      Pygame interface: theme, icons, session (threaded AI), anim, board_view,
                            brain_panel, app
   terminal.py, runner.py   terminal version, headless game loop
-evaluation/                scenarios.py (10 fixed dungeons), benchmark.py, results/
-tests/                     14 smoke tests (one per component)
+  metrics.py, human_log.py evaluation metrics (beliefs vs hidden world), human-game recording
+evaluation/                scenarios.py (10 fixed dungeons), benchmark.py, oracle.py (winnability),
+                           human_games.py, results/
+tests/                     16 smoke tests (one per component)
 ```
 
 **Separation of hidden and known state.** The explorer receives a frozen `PublicInfo` once and a
@@ -150,48 +152,73 @@ decision box.
 
 ## Testing methodology
 
-* **14 smoke tests** (`python -m pytest`, about 5 s), one per component: hidden-information
+* **16 smoke tests** (`python -m pytest`, about 10 s), one per component: hidden-information
   separation (static import check), seeded world generation, turn order and illegal moves, action
   events, DPLL pit deduction, pit probabilities against the AIMA textbook numbers, A* against
   Dijkstra, alpha-beta on the AIMA textbook tree, a full AI game, one fixed scenario, the terminal
-  version, and the GUI (SDL dummy video driver).
+  version, the GUI (SDL dummy video driver), the winnability oracle and human-game recording.
 * **10 deterministic scenarios** (`python -m evaluation.scenarios`): safe exploration,
   logical pit deduction, ambiguous hazards, moving
   Wumpus, teleporter discovery, collapsing route, shuffle event, jump opportunity, adversarial trap,
   gold retrieval and escape. Each checks concrete events and Brain entries. All 10 pass.
-* **Benchmark** on 100 held-out maps (below). While developing the agent I only watched seeds 0-29.
+* **Benchmark** on 500 held-out maps (below). While developing the agent I only watched seeds 0-29.
 * **Clean-environment check:** fresh clone + fresh venv + `pip install -r requirements.txt` →
   all tests pass, terminal game runs, GUI launches (headless).
 
 ## Benchmark results (actual, `python -m evaluation.benchmark`)
 
-Automated **AI-versus-AI** games only; human games are never part of these statistics. 100 maps per
-cell (seeds 1000-1099), 150-turn limit. Full tables and per-game JSON in `evaluation/results/`.
+Automated **AI-versus-AI** games only; human games are recorded separately (below). 500 held-out maps
+per cell (seeds 1000-1499), 150-turn limit, every agent on the same maps. Brackets are 95% confidence
+intervals. All tables are in [evaluation/results/benchmark.md](evaluation/results/benchmark.md), per-game
+data in `benchmark.json`.
 
-| Agent | vs random Wumpus: win / survival / avg score | vs hunter Wumpus: win / survival | vs Minimax Wumpus: win / survival |
-|---|---|---|---|
-| random baseline | 1% / 1% / −1005 | 0% / 0% | 0% / 0% |
-| logic + A* | 25% / 66% / **−120** | 6% / **21%** | 3% / **23%** |
-| logic + Bayes + A* | 33% / 42% / −293 | 6% / 8% | 6% / 11% |
-| full hybrid (+ Minimax) | **38%** / 51% / −162 | **13%** / 19% | **6%** / 10% |
+**Every map is winnable.** An omniscient explorer (`evaluation/oracle.py`: A* over the real mechanics,
+idle Wumpus) wins all 500 maps, in a median 17 actions. So every loss below is the agent's, not the map's.
 
-Detail vs the random Wumpus: pit deaths 76 / 0 / 16 / 23, Wumpus deaths 23 / 34 / 42 / 26,
-timeouts 0% / 1% / 2% / 5%, average planning time 0.1 / 15.5 / 27.6 / 36.2 ms per decision
-(max 524 ms).
+| Agent | vs idle Wumpus | vs random Wumpus | vs hunter Wumpus | vs Minimax Wumpus |
+|---|---|---|---|---|
+| random baseline | 1% | 1% | 0% | 0% |
+| logic + A* | 25% [21, 29] | 20% [16, 23] | 4% [3, 7] | 4% [2, 6] |
+| logic + Bayes + A* | **54%** [49, 58] | 31% [27, 35] | 5% [3, 7] | **5%** [4, 8] |
+| full hybrid (+ Minimax) | 52% [47, 56] | **38%** [34, 42] | **18%** [15, 21] | 4% [3, 7] |
 
-What the numbers say:
+Win rates. Average planning time is 12-45 ms per decision (max 0.7 s; 1.3 s at search depth 6).
 
-* Reasoning matters: the random baseline almost never wins; every reasoning agent does far better.
-* **Logic only is the most cautious.** It never enters an unproven cell (zero pit deaths) and
-  retreats for a draw in 40% of games, which gives the best *average score*, but the fewest wins.
-* **Bayesian estimation buys wins with risk:** it explores beyond what logic can prove (+8 points of
-  win rate) and pays with some pit deaths.
-* **Minimax reduces deaths by the Wumpus** against a random Wumpus (42 → 26) and doubles the win rate
-  against the greedy hunter (6% → 13%). Against the omniscient Minimax Wumpus it does not help (6%):
-  that opponent waits diagonally, where it causes no stench, and strikes when the explorer steps
-  adjacent. The explorer's senses cannot detect this in time.
+What the numbers say (each comparison is paired on the same 500 maps, exact McNemar test):
+
+* **Bayesian estimation is the biggest single gain:** 25% → 54% against an idle Wumpus and 20% → 31%
+  against a random one (both p < 0.001). Logic alone never falls into a pit, but it retreats
+  empty-handed in 39-47% of games because it cannot prove enough cells safe.
+* **Minimax helps against a Wumpus that comes for you:** 5% → 18% against the hunter and 31% → 38%
+  against a random Wumpus (both p < 0.001). Against an idle Wumpus it makes no significant
+  difference (54% vs 52%, p = 0.37), as expected: there is no duel to win.
+* **Nothing beats the omniscient Minimax Wumpus** (4-5% for every reasoning agent; Minimax's 22 vs 26
+  wins is not a significant difference, p = 0.13). That opponent waits diagonally, where it causes no
+  stench, and strikes when the explorer steps adjacent. It also searches the explorer's replies, so it
+  never stays in the line of fire: all 265 arrows fired at it missed.
+* **Minimax works where it acts.** On *danger turns* (decisions made with the real Wumpus adjacent)
+  the explorer is eaten in that turn 42% of the time with Minimax vs 59% without against the hunter,
+  38% vs 49% against the Minimax Wumpus and 14% vs 19% against a random one. Against an idle Wumpus it
+  is worse (7% vs 2%, the explorer stepping into the Wumpus' cell); this is not diagnosed yet.
+* **Minimax settings barely matter** (200 maps): depth 2, 4 or 6 and 1, 4 or 8 Wumpus hypotheses all
+  win 20% against the hunter and 4-5% against the Minimax Wumpus. Depth 6 is worse on danger turns
+  (53% eaten vs 38%) and 40% slower. Depth 2 is as good as the default (depth 4) and faster.
+* **Pit probabilities are well calibrated.** Frontier cells given 20-30% held a pit 26% of the time,
+  50-60% → 53%, 90-100% → 99.6%. Brier score 0.089, against 0.199 for a baseline that only knows the
+  pit density.
+* **The Wumpus tracker is the weakest component.** It puts 3-9% on the Wumpus' true cell (a uniform
+  guess gives 1.6%) and its top guess is right 3-12% of the time. Stench is only sensed next to the
+  Wumpus, so most turns carry little information about where it is.
+* **Wins take about 3x the oracle's actions** (median 2.9-3.3x against idle and random Wumpus): the
+  price of exploring without a map.
 * The held-out win rate (38% vs a random Wumpus) is **lower than on the seeds used during
   development** (15 of 30 = 50% in the last development sweep). Part of the tuning fit those maps.
+
+### Human games
+
+Every finished game in which you play the Wumpus (GUI or terminal) is appended to
+`evaluation/results/human_games.jsonl`, with the same metrics as the benchmark. `python -m
+evaluation.human_games` summarises them. No human games have been recorded yet.
 
 ## Limitations
 
@@ -199,31 +226,11 @@ What the numbers say:
   so strategy fusion is possible. It assumes a worst-case opponent and a 4-ply horizon, and pit risk
   is charged instead of branched on (no expectiminimax).
 * **The rules favour an omniscient, aggressive Wumpus.** It moves every turn and stench is only
-  sensed adjacently, so against the Minimax Wumpus the explorer wins 6% of games.
+  sensed adjacently, so against the Minimax Wumpus the explorer wins 4-5% of games.
 * **The Wumpus motion model** (15% stay, 50% pursuit, 50% wander) is a fixed assumption about the
   human. When the human does something it gives zero probability, the filter resets to uniform (logged).
 * **Pit prior** uses an independent δ per cell rather than the exact pit count, and frontier
   components above 18 cells use a labelled approximation (not observed in practice on 8×8).
 * **Explorer behaviour** is rule-based on top of the algorithms (tiers, risk caps, anti-paralysis,
   stuck/retreat). Those thresholds were tuned on development seeds.
-* **Turn limit** of 150 is reached in up to 5% of games.
-
-## Incomplete features / honest notes
-
-* The GUI was verified with automated key/mouse event injection and headless screenshots
-  (see `docs/screenshots/`), and play-tested by hand in an interactive window. Please report
-  anything that feels wrong in real use.
-* Animations are functional (movement tweens, jump arcs, rings and flashes for teleport, collapse,
-  shuffle, gold, hits, new inferences and route changes) rather than elaborate. There is no sound.
-* Human-versus-AI play is supported in both the GUI and the terminal, but no human games were
-  recorded or analysed.
-* The Agent's Mind panel draws the explorer where it *expects* to be after its latest action (its own
-  prediction). A bump or an undiscovered portal can make that differ from Reality until its next percept.
-
-## Future improvements
-
-* Belief-state (POMDP-style) search instead of determinized Minimax; expectiminimax for pits.
-* Learn the human's motion model online from the observed evidence instead of a fixed mixture.
-* Exact pit-count prior (enumeration conditioned on the known number of pits).
-* Deeper search with iterative deepening under a time budget, now that the AI runs in a worker thread.
-* Record and replay human games (the engine is deterministic, so a move log is enough).
+* **Turn limit** of 150 is reached in up to 11% of games (Bayes agents against an idle Wumpus).

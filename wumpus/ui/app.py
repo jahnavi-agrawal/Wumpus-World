@@ -22,6 +22,7 @@ from .board_view import draw_mind, draw_reality
 from .brain_panel import BrainPanel, Inspector
 from .help_screen import HelpScreen
 from .session import GameSession
+from ..human_log import HUMAN_LOG
 
 KEY_DIRS = {pygame.K_w: Direction.N, pygame.K_UP: Direction.N, pygame.K_d: Direction.E, pygame.K_RIGHT: Direction.E,
             pygame.K_s: Direction.S, pygame.K_DOWN: Direction.S, pygame.K_a: Direction.W, pygame.K_LEFT: Direction.W}
@@ -40,7 +41,7 @@ class App:
         pygame.display.set_caption("WUMPUS: THE MIND GAMES")
         self.screen = pygame.display.set_mode((T.WIDTH, T.HEIGHT))
         self.clock = pygame.time.Clock()
-        self.session = GameSession(seed, wumpus_mode)
+        self.session = GameSession(seed, wumpus_mode, record_to=None if headless else HUMAN_LOG)
         self.anim = Animator()
         self.brain = BrainPanel(T.BRAIN)
         self.inspector: Inspector | None = None

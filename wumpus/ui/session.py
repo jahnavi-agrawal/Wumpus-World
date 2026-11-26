@@ -20,6 +20,7 @@ from ..core.percepts import Percept
 from ..environment.engine import GameEngine, GameStatus, Phase
 from ..environment.events import GameEvent
 from ..environment.world import WorldState
+from ..human_log import HumanGameLog
 
 
 @dataclass(frozen=True)
@@ -58,9 +59,10 @@ def mind_snapshot(agent: ExplorerAgent) -> MindSnapshot:
 class GameSession:
     WUMPUS_MODES = ("human", "random", "hunter", "minimax", "idle")
 
-    def __init__(self, seed: int = 7, wumpus_mode: str = "human", max_turns: int = 150):
+    def __init__(self, seed: int = 7, wumpus_mode: str = "human", max_turns: int = 150, record_to=None):
         self.max_turns = max_turns
         self.wumpus_mode = wumpus_mode
+        self.record_to = record_to          # path for human-game records (None: do not record)
         self.restart(seed)
 
     # ------------------------------------------------------------ lifecycle
@@ -77,8 +79,12 @@ class GameSession:
         self.last_events: list[GameEvent] = []
         self.reality = self._reality()
         self.mind = mind_snapshot(self.agent)
+        self.human_log = (HumanGameLog(self.agent, "gui", self.record_to)
+                          if self.record_to is not None and self.wumpus_mode == "human" else None)
 
     def set_wumpus_mode(self, mode: str) -> None:
+        if self.human_log and mode != "human":
+            self.human_log.valid = False    # an AI controlled part of this game -> not a human game
         self.wumpus_mode = mode
         self.controller = None if mode == "human" else make_controller(mode, self.seed)
 
@@ -134,8 +140,11 @@ class GameSession:
         if self._error is not None:
             err, self._error = self._error, None
             raise err
+        if self.human_log:
+            self.human_log.before_action(self.engine.world, self._result)
         events = self.engine.apply_explorer_action(self._result)
         self._result = None
+        self._finish_record()
         self._sync()
         self.last_events = events
         return events
@@ -151,9 +160,14 @@ class GameSession:
         if self.phase is not Phase.WUMPUS or self.busy or action not in self.engine.legal_wumpus_actions():
             return None
         events = self.engine.apply_wumpus_action(action)
+        self._finish_record()
         self._sync()
         self.last_events = events
         return events
+
+    def _finish_record(self) -> None:
+        if self.human_log and self.phase is Phase.OVER:
+            self.human_log.finish(self.engine)
 
     def wumpus_ai_step(self) -> list[GameEvent] | None:
         if self.phase is not Phase.WUMPUS or self.controller is None or self.busy:
