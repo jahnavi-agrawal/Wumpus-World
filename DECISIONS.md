@@ -441,3 +441,27 @@ agent beats random play about half the time.
   matter, so the default is kept.
 * **Run note:** the computer slept during the benchmark. The 3 games in progress logged a 12-hour
   decision; they were re-run (identical outcomes) and only their planning times replaced.
+
+## D17 — Minimax walked into the Wumpus' most likely cell
+
+* **Symptom** (D16 benchmark): against an idle Wumpus, danger turns ended with the explorer eaten 7%
+  of the time with Minimax, 2% without. In all 42 maps where only the Minimax agent was eaten, it was
+  eaten on a danger turn.
+* **Cause** (map 1007, turn 34): explorer at (1,1) smells the Wumpus; belief 76% (2,1) straight
+  ahead, 17% (1,0), 7% (1,2). Minimax assumes a Wumpus that always attacks, so under the 76%
+  hypothesis every action scores -1000 (walk in, or be eaten after turning). The tie is decided by
+  the unlikely hypotheses, where FORWARD is best, and FORWARD walks into the 76% cell.
+* **Fix:** a *walk-in check* after Minimax. Using the agent's own motion model
+  (`WumpusTracker.entry_risk`), if entering the chosen cell is riskier than staying put, take
+  Minimax's best action that is no riskier than staying, and log why.
+* **Measured** (paired, same 200 maps, full hybrid before -> after): idle 99 -> 97 wins (p = 0.75),
+  eaten on a danger turn 8% -> 5%; random 74 -> 72 (p = 0.73), 15% -> 13%; hunter 39 -> 39, 42% -> 42%;
+  Minimax 9 -> 9, 35% -> 35%. No significant change in wins, fewer deaths, no cost where Minimax helps.
+* **Not fixed:** the remaining deaths are a different case. On map 1016 the belief is 44% ahead,
+  56% beside; under the motion model walking forward (44%) is genuinely safer than staying (about
+  59%, the model's attack rate). It is wrong only because this Wumpus never attacks. Closing that gap
+  needs the Wumpus' aggressiveness to be learned during play, not a fixed motion model.
+* A smoke test replays map 1007 and checks the explorer is not eaten and the check fired.
+* **Confirmed on the full benchmark** (500 maps, re-run with the fix, paired against the D16 run):
+  idle 259 -> 263 wins (p = 0.59), eaten on a danger turn 7.3% -> 4.8%; random 190 -> 182 (p = 0.12, not
+  significant), 14.2% -> 14.5%; hunter 89 -> 89; Minimax 22 -> 22. The README tables use this run.

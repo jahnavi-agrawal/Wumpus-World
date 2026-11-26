@@ -48,7 +48,7 @@ wumpus/
   metrics.py, human_log.py evaluation metrics (beliefs vs hidden world), human-game recording
 evaluation/                scenarios.py (10 fixed dungeons), benchmark.py, oracle.py (winnability),
                            human_games.py, results/
-tests/                     16 smoke tests (one per component)
+tests/                     17 smoke tests (one per component)
 ```
 
 **Separation of hidden and known state.** The explorer receives a frozen `PublicInfo` once and a
@@ -152,11 +152,12 @@ decision box.
 
 ## Testing methodology
 
-* **16 smoke tests** (`python -m pytest`, about 10 s), one per component: hidden-information
+* **17 smoke tests** (`python -m pytest`, about 10 s), one per component: hidden-information
   separation (static import check), seeded world generation, turn order and illegal moves, action
   events, DPLL pit deduction, pit probabilities against the AIMA textbook numbers, A* against
   Dijkstra, alpha-beta on the AIMA textbook tree, a full AI game, one fixed scenario, the terminal
-  version, the GUI (SDL dummy video driver), the winnability oracle and human-game recording.
+  version, the GUI (SDL dummy video driver), the winnability oracle, human-game recording and a
+  regression test for the Minimax walk-in bug (D17).
 * **10 deterministic scenarios** (`python -m evaluation.scenarios`): safe exploration,
   logical pit deduction, ambiguous hazards, moving
   Wumpus, teleporter discovery, collapsing route, shuffle event, jump opportunity, adversarial trap,
@@ -180,38 +181,40 @@ idle Wumpus) wins all 500 maps, in a median 17 actions. So every loss below is t
 | random baseline | 1% | 1% | 0% | 0% |
 | logic + A* | 25% [21, 29] | 20% [16, 23] | 4% [3, 7] | 4% [2, 6] |
 | logic + Bayes + A* | **54%** [49, 58] | 31% [27, 35] | 5% [3, 7] | **5%** [4, 8] |
-| full hybrid (+ Minimax) | 52% [47, 56] | **38%** [34, 42] | **18%** [15, 21] | 4% [3, 7] |
+| full hybrid (+ Minimax) | 53% [48, 57] | **36%** [32, 41] | **18%** [15, 21] | 4% [3, 7] |
 
-Win rates. Average planning time is 12-45 ms per decision (max 0.7 s; 1.3 s at search depth 6).
+Win rates. Average planning time is 10-37 ms per decision (max 0.4 s; 1.7 s at search depth 6).
 
 What the numbers say (each comparison is paired on the same 500 maps, exact McNemar test):
 
 * **Bayesian estimation is the biggest single gain:** 25% → 54% against an idle Wumpus and 20% → 31%
   against a random one (both p < 0.001). Logic alone never falls into a pit, but it retreats
   empty-handed in 39-47% of games because it cannot prove enough cells safe.
-* **Minimax helps against a Wumpus that comes for you:** 5% → 18% against the hunter and 31% → 38%
-  against a random Wumpus (both p < 0.001). Against an idle Wumpus it makes no significant
-  difference (54% vs 52%, p = 0.37), as expected: there is no duel to win.
+* **Minimax helps against a Wumpus that comes for you:** 5% → 18% against the hunter (p < 0.001)
+  and 31% → 36% against a random Wumpus (p = 0.003). Against an idle Wumpus it makes no significant
+  difference (54% vs 53%, p = 0.61), as expected: there is no duel to win.
 * **Nothing beats the omniscient Minimax Wumpus** (4-5% for every reasoning agent; Minimax's 22 vs 26
   wins is not a significant difference, p = 0.13). That opponent waits diagonally, where it causes no
   stench, and strikes when the explorer steps adjacent. It also searches the explorer's replies, so it
   never stays in the line of fire: all 265 arrows fired at it missed.
 * **Minimax works where it acts.** On *danger turns* (decisions made with the real Wumpus adjacent)
   the explorer is eaten in that turn 42% of the time with Minimax vs 59% without against the hunter,
-  38% vs 49% against the Minimax Wumpus and 14% vs 19% against a random one. Against an idle Wumpus it
-  is worse (7% vs 2%, the explorer stepping into the Wumpus' cell); this is not diagnosed yet.
+  38% vs 49% against the Minimax Wumpus and 15% vs 19% against a random one. Against an idle Wumpus it
+  is still slightly worse (5% vs 2%). It was 7%, because Minimax stepped into the Wumpus' most likely
+  cell; that bug is fixed (DECISIONS D17). The rest of the gap comes from the fixed motion model: at
+  first contact the explorer cannot tell an idle Wumpus from one that attacks.
 * **Minimax settings barely matter** (200 maps): depth 2, 4 or 6 and 1, 4 or 8 Wumpus hypotheses all
-  win 20% against the hunter and 4-5% against the Minimax Wumpus. Depth 6 is worse on danger turns
-  (53% eaten vs 38%) and 40% slower. Depth 2 is as good as the default (depth 4) and faster.
+  win 18-21% against the hunter and 4-5% against the Minimax Wumpus. Depth 6 is worse on danger turns
+  (50% eaten vs 38%) and its slowest decision takes 1.7 s. Depth 2 is as good as the default (depth 4).
 * **Pit probabilities are well calibrated.** Frontier cells given 20-30% held a pit 26% of the time,
-  50-60% → 53%, 90-100% → 99.6%. Brier score 0.089, against 0.199 for a baseline that only knows the
+  50-60% → 53%, 90-100% → 99.7%. Brier score 0.089, against 0.200 for a baseline that only knows the
   pit density.
 * **The Wumpus tracker is the weakest component.** It puts 3-9% on the Wumpus' true cell (a uniform
   guess gives 1.6%) and its top guess is right 3-12% of the time. Stench is only sensed next to the
   Wumpus, so most turns carry little information about where it is.
 * **Wins take about 3x the oracle's actions** (median 2.9-3.3x against idle and random Wumpus): the
   price of exploring without a map.
-* The held-out win rate (38% vs a random Wumpus) is **lower than on the seeds used during
+* The held-out win rate (36% vs a random Wumpus) is **lower than on the seeds used during
   development** (15 of 30 = 50% in the last development sweep). Part of the tuning fit those maps.
 
 ### Human games

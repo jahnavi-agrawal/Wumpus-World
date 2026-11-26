@@ -209,3 +209,10 @@ def test_human_game_is_recorded_and_summarised(tmp_path):
     games = load(log)
     assert len(games) == 1 and games[0]["seed"] == 1 and games[0]["metrics"]["cal_cells"] > 0
     assert "Human Wumpus games: 1" in summary(games)
+
+
+def test_minimax_does_not_walk_into_the_likely_wumpus():
+    """Map 1007, idle Wumpus: Minimax used to step FORWARD into the cell it gave 76% (worst-case ties)."""
+    engine, agent, _ = play_game(GameConfig(seed=1007), ScriptedWumpusController("idle", 1007))
+    assert engine.result.reason != "EATEN"
+    assert any(e.summary.startswith("walk-in check") for e in agent.log.entries)

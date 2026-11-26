@@ -847,6 +847,33 @@ class ExplorerAgent:
                     q.append(n)
         return dist
 
+    def _walk_in_check(self, res, a: ExplorerAction, ref: int) -> ExplorerAction:
+        """Minimax assumes a Wumpus that always attacks. When every action loses under the most likely
+        hypothesis, the choice is decided by the unlikely ones and can walk straight into the Wumpus'
+        most likely cell. Under our own motion model, entering that cell can be deadlier than staying:
+        then take Minimax's best action whose Wumpus risk is not above the risk of staying put."""
+        c = self._landing(a)
+        if c is None or not self.tracker.alive:
+            return a
+        blocked = self._blocked()
+        risk = lambda cell: self.tracker.entry_risk(cell, blocked, self.pit_prob)
+        enter, stay = risk(c), risk(self.pos)
+        if enter <= stay:
+            return a
+        options = [b for b in res.root_values if b is not a and (self._landing(b) is None or risk(self._landing(b)) <= stay)]
+        if not options:
+            return a
+        alt = max(options, key=res.root_values.get)
+        self.log.add(self.turn, "WARNING", f"walk-in check: Minimax chose {a} into {c}, but entering is riskier "
+                     f"({enter:.0%}) than staying ({stay:.0%}) -> {alt}",
+                     ["Minimax assumes the Wumpus always attacks, so under the most likely hypothesis every",
+                      "action scored as a loss and the unlikely hypotheses decided.",
+                      f"own motion model: P(eaten | enter {c}) = {enter:.1%} (Wumpus there now or moving in)",
+                      f"own motion model: P(eaten | stay at {self.pos}) = {stay:.1%} (Wumpus must choose to attack)",
+                      f"-> {alt}: best Minimax value among actions no riskier than staying "
+                      f"(E[V]={res.root_values[alt]:.0f} vs {res.root_values[a]:.0f})"], refs=[ref], cell=c)
+        return alt
+
     def _minimax_action(self, goal: Pos) -> ExplorerAction:
         cfg = self.cfg
         blocked = self._blocked() | ({self.unstable_here} if self.unstable_here else set())
@@ -861,10 +888,10 @@ class ExplorerAgent:
         e = self.log.add(self.turn, "MINIMAX", f"threat {self.threat:.0%} -> best {res.best_action} "
                          f"(E[V]={res.expected_value:.0f}, {res.stats.nodes} nodes, {res.stats.cutoffs} cutoffs)",
                          res.explain(), refs=[self.turn_entries["WUMPUS_BELIEF"]])
-        a = res.best_action
+        a = self._walk_in_check(res, res.best_action, e.id)
         self.last_minimax = res
         self._turn_minimax = res
-        hyp, reply = res.predicted_reply()
+        hyp, reply = res.predicted_reply(a)
         if reply is not None:
             after = game.result(replace(root, wumpus=hyp), a)
             cell = game._land(after.wumpus.step(reply.direction)) if reply.direction else after.wumpus
