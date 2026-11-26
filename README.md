@@ -111,6 +111,20 @@ python main.py --terminal            # terminal version
 Terminal version: `w a s d`, `x` stay, `i <id>` inspect an entry, `b` brain entries of the last turn,
 `k` explorer's pit map, `m` its belief about where you are, `h` help, `q` quit.
 
+## Demo scenarios
+
+Maps that show each technique at work (all replayed and checked). A printable version with what to
+point out is in [docs/DEMO_SCENARIOS.txt](docs/DEMO_SCENARIOS.txt).
+
+| # | Command | What it shows |
+|---|---|---|
+| 1 | `python main.py` | You play the Wumpus. Pause with P and click a [RISK_CALC] or [INFERENCE] line to see the probability calculation or the logic proof. Stand next to the explorer to trigger [MINIMAX]. |
+| 2 | `python main.py --seed 1086 --wumpus hunter` | Minimax: on turn 3 it shoots, the scream confirms the kill, and the explorer wins. Without Minimax the same agent is eaten on this map. |
+| 3 | `python main.py --seed 1057 --wumpus idle` | Logic and Bayes alone: a 17-action win against a Wumpus that never moves. |
+| 4 | `python main.py --seed 1007 --wumpus idle` | The walk-in check (DECISIONS D17): press F and look for "walk-in check" warnings around turns 25-50. The explorer survives (a draw). |
+| 5 | `python main.py --wumpus minimax` | The hardest opponent: an all-seeing AI Wumpus that wins most games. |
+| 6 | `python -m evaluation.scenarios` | The 10 fixed test dungeons; all print PASS. |
+
 ## How to read the Brain View
 
 **PANEL 01 / REALITY** is the true dungeon (only you see it). Small hexagons show where a breeze **B**
